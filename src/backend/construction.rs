@@ -4,6 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use parking_lot::{Mutex, RwLock};
 use tower_lsp_server::Client;
@@ -123,6 +124,7 @@ impl BackendState {
             member_ref_counts: reference_counts::new_member_ref_counts(),
             init_complete: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             shutdown_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            hover_on_declarations: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             workspace_index: crate::backend::WorkspaceIndexState::default(),
             sync_ast_updates: false,
         }
@@ -293,6 +295,30 @@ impl Backend {
         })
     }
 
+    /// Turn on hover on declarations for this `Backend`.
+    ///
+    /// This is the command-line route: the binary passes the flag (or
+    /// its built-in default) here before serving. `initializationOptions`
+    /// can still turn the feature on later during `initialize`; nothing
+    /// ever turns it off, so passing `false` leaves the state as it is.
+    pub fn with_hover_on_declarations(self, enabled: bool) -> Self {
+        if enabled {
+            self.raise_hover_on_declarations();
+        }
+        self
+    }
+
+    /// Whether hover on declarations is on.
+    pub(crate) fn hover_on_declarations_enabled(&self) -> bool {
+        self.hover_on_declarations.load(Ordering::Acquire)
+    }
+
+    /// Raise hover on declarations to on. There is deliberately no
+    /// way to lower it again.
+    pub(crate) fn raise_hover_on_declarations(&self) {
+        self.hover_on_declarations.store(true, Ordering::Release);
+    }
+
     /// A `Backend` sharing this one's state, without its request's
     /// progress sink.
     ///
@@ -305,5 +331,34 @@ impl Backend {
             state: Arc::clone(&self.state),
             request_progress: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clone_for_blocking_sees_hover_on_declarations() {
+        let backend = Backend::new_test().with_hover_on_declarations(true);
+        assert!(backend.hover_on_declarations_enabled());
+
+        let clone = backend.clone_for_blocking();
+        assert!(clone.hover_on_declarations_enabled());
+    }
+
+    #[test]
+    fn hover_on_declarations_starts_off_and_is_never_lowered() {
+        let backend = Backend::new_test();
+        assert!(!backend.hover_on_declarations_enabled());
+
+        let backend = backend.with_hover_on_declarations(false);
+        assert!(!backend.hover_on_declarations_enabled());
+
+        let backend = backend.with_hover_on_declarations(true);
+        assert!(backend.hover_on_declarations_enabled());
+
+        let backend = backend.with_hover_on_declarations(false);
+        assert!(backend.hover_on_declarations_enabled());
     }
 }

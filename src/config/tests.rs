@@ -1076,3 +1076,53 @@ fn client_options_carry_only_the_two_filter_lists() {
     let options = ClientIndexingOptions::from_client_settings(&settings).unwrap();
     assert_eq!(options.exclude, ["generated"]);
 }
+
+#[test]
+fn client_hover_options_read_both_shapes() {
+    for settings in [
+        serde_json::json!({ "hover": { "declarations": true } }),
+        serde_json::json!({ "phpantom": { "hover": { "declarations": true } } }),
+    ] {
+        let options = ClientHoverOptions::from_client_settings(&settings)
+            .expect("a readable hover block is a hover update");
+        assert!(options.declarations, "for {settings}");
+    }
+}
+
+/// A settings blob with no readable `hover` block means "not about
+/// hover", not "hover is off": no `hover` key, a non-object block,
+/// or a non-boolean `declarations` value.
+#[test]
+fn client_hover_options_ignore_unset_values() {
+    for settings in [
+        serde_json::json!({}),
+        serde_json::json!({ "unrelated": true }),
+        serde_json::json!({ "hover": true }),
+        serde_json::json!({ "hover": { "declarations": "yes" } }),
+        serde_json::json!({ "hover": { "declarations": 1 } }),
+        serde_json::json!(null),
+    ] {
+        assert!(
+            ClientHoverOptions::from_client_settings(&settings).is_none(),
+            "settings without a readable hover block must be ignored: {settings}"
+        );
+    }
+}
+
+/// A present `hover` block that does not say `true` — `false`, an
+/// unrelated key, or no `declarations` key at all — reads as off.
+/// Only `true` turns declarations on, so none of these can lower a
+/// switch the command line raised.
+#[test]
+fn client_hover_options_only_true_turns_declarations_on() {
+    for settings in [
+        serde_json::json!({ "hover": { "declarations": false } }),
+        serde_json::json!({ "phpantom": { "hover": { "declarations": false } } }),
+        serde_json::json!({ "hover": { "other": true } }),
+        serde_json::json!({ "hover": {} }),
+    ] {
+        let options = ClientHoverOptions::from_client_settings(&settings)
+            .expect("a present hover block is a hover update");
+        assert!(!options.declarations, "for {settings}");
+    }
+}

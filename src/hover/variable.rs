@@ -34,30 +34,25 @@ impl Backend {
             ctx,
             ..
         } = *site;
-        // Suppress hover when the cursor is on a variable at its
-        // definition site where the type is already visible in
-        // the signature (properties, static/global declarations).
-        // For parameters, assignments, foreach bindings, and catch
-        // bindings, hover is useful to show the resolved type and
-        // any docblock descriptions.
-        if let Some(def_kind) = self.lookup_var_def_kind_at(uri, name, cursor_offset)
-            && (!matches!(
-                def_kind,
-                VarDefKind::Assignment
-                    | VarDefKind::CompoundAssignment
-                    | VarDefKind::Parameter
-                    | VarDefKind::Foreach
-                    | VarDefKind::Catch
-                    | VarDefKind::ArrayDestructuring
-                    | VarDefKind::ListDestructuring
-            ) || (def_kind == VarDefKind::Parameter
-                && self.is_promoted_property_param(uri, symbol.start)))
-        {
-            // A constructor-promoted parameter declares a property,
-            // not a local variable, so it follows the same
-            // "already visible on screen" rule as any other
-            // property declaration.
-            return None;
+        // At a variable definition site, `variable_definition_hover`
+        // decides, together with the promoted-parameter check below,
+        // whether a hover is shown at all.
+        if let Some(def_kind) = self.lookup_var_def_kind_at(uri, name, cursor_offset) {
+            let suppressed =
+                match variable_definition_hover(&def_kind, self.hover_on_declarations_enabled()) {
+                    VariableDefinitionHover::Suppress => true,
+                    VariableDefinitionHover::ShowVariable => {
+                        // A constructor-promoted parameter declares a
+                        // property, not a local variable, so it follows
+                        // the same "already visible on screen" rule as
+                        // any other property declaration.
+                        def_kind == VarDefKind::Parameter
+                            && self.is_promoted_property_param(uri, symbol.start)
+                    }
+                };
+            if suppressed {
+                return None;
+            }
         }
         self.hover_variable(name, uri, content, cursor_offset, site.current_class(), ctx)
     }
@@ -159,6 +154,46 @@ impl Backend {
         // internally, so if it returned `None` the variable is truly
         // unresolved.  Show a plain variable hover.
         Some(make_hover(format!("```php\n<?php\n{}\n```", var_name)))
+    }
+}
+
+/// What hover does at a variable definition site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VariableDefinitionHover {
+    /// Show the ordinary variable hover.
+    ShowVariable,
+    /// Show nothing: the declaration is already on screen.
+    Suppress,
+}
+
+/// The hover policy for one kind of variable definition site.
+///
+/// Every `VarDefKind` is named, so a kind is never covered by accident
+/// through a catch-all. The caller passes the declaration-hover
+/// switch; no entry's answer depends on it.
+///
+/// The `Parameter` entry is not the whole policy for parameters: the
+/// caller also suppresses a promoted parameter, which declares a
+/// property rather than a local variable.
+fn variable_definition_hover(
+    kind: &VarDefKind,
+    _hover_on_declarations: bool,
+) -> VariableDefinitionHover {
+    match kind {
+        VarDefKind::Assignment => VariableDefinitionHover::ShowVariable,
+        VarDefKind::CompoundAssignment => VariableDefinitionHover::ShowVariable,
+        VarDefKind::Parameter => VariableDefinitionHover::ShowVariable,
+        VarDefKind::Property => VariableDefinitionHover::Suppress,
+        VarDefKind::Foreach => VariableDefinitionHover::ShowVariable,
+        VarDefKind::Catch => VariableDefinitionHover::ShowVariable,
+        VarDefKind::StaticDecl => VariableDefinitionHover::Suppress,
+        VarDefKind::GlobalDecl => VariableDefinitionHover::Suppress,
+        VarDefKind::ArrayDestructuring => VariableDefinitionHover::ShowVariable,
+        VarDefKind::ListDestructuring => VariableDefinitionHover::ShowVariable,
+        VarDefKind::ClosureCapture => VariableDefinitionHover::Suppress,
+        VarDefKind::DocblockParam => VariableDefinitionHover::Suppress,
+        VarDefKind::DocblockVar => VariableDefinitionHover::Suppress,
+        VarDefKind::Unset => VariableDefinitionHover::Suppress,
     }
 }
 
@@ -264,4 +299,40 @@ fn resolve_type_namespace_structured(
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn variable_definition_hover_names_every_kind_with_its_current_policy() {
+        use VariableDefinitionHover::{ShowVariable, Suppress};
+
+        let policies = [
+            (VarDefKind::Assignment, ShowVariable),
+            (VarDefKind::CompoundAssignment, ShowVariable),
+            (VarDefKind::Parameter, ShowVariable),
+            (VarDefKind::Property, Suppress),
+            (VarDefKind::Foreach, ShowVariable),
+            (VarDefKind::Catch, ShowVariable),
+            (VarDefKind::StaticDecl, Suppress),
+            (VarDefKind::GlobalDecl, Suppress),
+            (VarDefKind::ArrayDestructuring, ShowVariable),
+            (VarDefKind::ListDestructuring, ShowVariable),
+            (VarDefKind::ClosureCapture, Suppress),
+            (VarDefKind::DocblockParam, Suppress),
+            (VarDefKind::DocblockVar, Suppress),
+            (VarDefKind::Unset, Suppress),
+        ];
+        for hover_on_declarations in [false, true] {
+            for (kind, expected) in &policies {
+                assert_eq!(
+                    variable_definition_hover(kind, hover_on_declarations),
+                    *expected,
+                    "for {kind:?} with the switch {hover_on_declarations}"
+                );
+            }
+        }
+    }
 }
