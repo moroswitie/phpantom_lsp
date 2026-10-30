@@ -99,8 +99,15 @@ impl Backend {
     /// content will be shared across tasks or stored for the duration
     /// of a request, since it avoids deep-cloning the file string.
     pub(crate) fn get_file_content_arc(&self, uri: &str) -> Option<Arc<String>> {
+        self.file_text(uri).map(FileText::into_arc)
+    }
+
+    /// [`get_file_content_arc`](Self::get_file_content_arc), remembering
+    /// whether the text is the editor's buffer or the file on disk, for a
+    /// caller that publishes it (see [`Backend::update_ast_fetched`]).
+    pub(crate) fn file_text(&self, uri: &str) -> Option<FileText> {
         if let Some(content) = self.open_files.read().get(uri) {
-            return Some(Arc::clone(content));
+            return Some(FileText::Buffer(Arc::clone(content)));
         }
 
         // Embedded stubs have no on-disk file.  A class stub's URI path is
@@ -108,15 +115,19 @@ impl Backend {
         // key in `stub_function_index`.
         if let Some(class_name) = uri.strip_prefix(crate::stubs::STUB_URI_PREFIX) {
             let stub_idx = self.stub_index.read();
-            return stub_idx.get(class_name).map(|s| Arc::new(s.to_string()));
+            return stub_idx
+                .get(class_name)
+                .map(|s| FileText::Disk(Arc::new(s.to_string())));
         }
         if let Some(func_name) = uri.strip_prefix(crate::stubs::STUB_FUNCTION_URI_PREFIX) {
             let stub_fn_idx = self.stub_function_index.read();
-            return stub_fn_idx.get(func_name).map(|s| Arc::new(s.to_string()));
+            return stub_fn_idx
+                .get(func_name)
+                .map(|s| FileText::Disk(Arc::new(s.to_string())));
         }
 
         let path = crate::util::uri_to_path(uri)?;
-        crate::util::read_php_source(&path).map(Arc::new)
+        crate::util::read_php_source(&path).map(|content| FileText::Disk(Arc::new(content)))
     }
 
     /// Public helper for tests: get the uri_classes_index entry for a given URI.
@@ -483,6 +494,14 @@ impl Backend {
     /// Its classes stay in `fqn_class_index` (see `clear_file_maps`), and
     /// so do their inheritance edges, which describe those classes.
     pub(crate) fn forget_closed_file(&self, uri: &str) {
+        // After any publish of the buffer still running at the close, and
+        // not once the file has been opened again.
+        let Some(_publication) = self
+            .publication_order
+            .begin_disk(uri, &self.open_files, true)
+        else {
+            return;
+        };
         self.clear_file_maps(uri);
         self.parsed_uris.write().remove(uri);
         let uris = std::collections::HashSet::from([uri.to_string()]);
@@ -540,6 +559,37 @@ impl std::ops::Deref for AnalysableContent<'_> {
         match self {
             AnalysableContent::Borrowed(text) => text,
             AnalysableContent::Shared(text) => text,
+        }
+    }
+}
+
+/// A file's text and where it was read from, from [`Backend::file_text`].
+///
+/// Publishing the text depends on which it is: the buffer stands for the
+/// file only while the editor still holds that very buffer, the disk copy
+/// only while the file is closed.  Deref to `&str` to read it.
+#[derive(Clone)]
+pub(crate) enum FileText {
+    /// The editor's buffer, the one `open_files` held when it was read.
+    Buffer(Arc<String>),
+    /// The file on disk, or an embedded stub.
+    Disk(Arc<String>),
+}
+
+impl FileText {
+    pub(crate) fn into_arc(self) -> Arc<String> {
+        match self {
+            FileText::Buffer(text) | FileText::Disk(text) => text,
+        }
+    }
+}
+
+impl std::ops::Deref for FileText {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        match self {
+            FileText::Buffer(text) | FileText::Disk(text) => text,
         }
     }
 }

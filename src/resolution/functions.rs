@@ -103,7 +103,7 @@ impl Backend {
 
                     if let Some(content) = crate::util::read_php_source(&path) {
                         let uri = crate::util::path_to_uri(&path);
-                        self.update_ast(&uri, &content);
+                        self.update_ast_from_disk(&uri, &content);
 
                         // Re-check global_functions after parsing.
                         let fmap = self.symbols.global_functions.read();
@@ -137,7 +137,7 @@ impl Backend {
                 }
 
                 if let Some(content) = crate::util::read_php_source(path) {
-                    self.update_ast(&uri, &content);
+                    self.update_ast_from_disk(&uri, &content);
 
                     let fmap = self.symbols.global_functions.read();
                     for &name in candidates {
