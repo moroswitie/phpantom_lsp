@@ -338,6 +338,10 @@ An editor extension that ships stubs alongside the server (phpstorm-stubs as pla
 
 It is read from `initializationOptions` and `workspace/didChangeConfiguration`, also under a `phpantom` key, and a notification without a `stubs` block leaves it as it is. The directory is treated exactly like a [`[stubs]`](#stubs) path listed after the project's own, so the project's choices win where both declare a name. This is meant for extensions, not users: to add stubs yourself, use `[stubs] paths`.
 
+## Hover on declarations
+
+The `hover.declarations` initialization option (`{"hover": {"declarations": true}}`, also accepted under a `phpantom` key) is read only during `initialize`, never from `workspace/didChangeConfiguration`. The browser (WASM) build does not support it: it never reads `initializationOptions` and has no command line, so the option is ignored there.
+
 ## Code Formatting
 
 PHPantom ships a built-in PHP formatter (mago-formatter) that works out of the box, so `textDocument/formatting` requests are answered without any setup. The formatter is chosen per project in this order:

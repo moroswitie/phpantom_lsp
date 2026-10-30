@@ -71,6 +71,19 @@ impl Backend {
             self.set_client_stub_options(options);
         }
 
+        // Hover on declarations is read only here, during `initialize`,
+        // never from `workspace/didChangeConfiguration`. A missing,
+        // non-object or non-boolean value means "not set", and only
+        // `true` raises the switch: nothing ever turns it off again.
+        if let Some(options) = params
+            .initialization_options
+            .as_ref()
+            .and_then(crate::config::ClientHoverOptions::from_client_settings)
+            && options.declarations
+        {
+            self.raise_hover_on_declarations();
+        }
+
         let caps = ClientCaps::from_capabilities(&params.capabilities);
         // A client that can register type hierarchy dynamically gets it
         // from `initialized` instead, so it is never registered twice.
