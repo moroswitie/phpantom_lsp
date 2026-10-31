@@ -1442,6 +1442,53 @@ fn var_def_parameter_in_function() {
 }
 
 #[test]
+fn var_def_parameter_records_promotion_like_the_class_parser() {
+    let one_line = "<?php
+class A {
+    public function __construct(public int $a, private readonly int $b, readonly int $c, int $d) {}
+}
+";
+    let several_lines = "<?php
+class A {
+    public function __construct(
+        public int $a,
+        private readonly int $b,
+        readonly int $c,
+        int $d,
+    ) {}
+}
+";
+    for php in [one_line, several_lines] {
+        let map = parse_and_extract(php);
+        let property_offsets: Vec<u32> = crate::Backend::parse_php_versioned(php, None)
+            .iter()
+            .flat_map(|class| class.properties.iter())
+            .map(|property| property.name_offset)
+            .collect();
+        let parameters: Vec<_> = map
+            .var_defs
+            .iter()
+            .filter(|d| d.kind == VarDefKind::Parameter)
+            .collect();
+        assert_eq!(parameters.len(), 4, "in {php}");
+        for def in &parameters {
+            assert_eq!(
+                def.is_promoted,
+                property_offsets.contains(&def.offset),
+                "${} in {php}",
+                def.name
+            );
+        }
+        let promoted: Vec<&str> = parameters
+            .iter()
+            .filter(|d| d.is_promoted)
+            .map(|d| d.name.as_str())
+            .collect();
+        assert_eq!(promoted, ["a", "b", "c"], "in {php}");
+    }
+}
+
+#[test]
 fn var_def_foreach_key_and_value() {
     let php = "<?php\nfunction f() {\n    foreach ($items as $key => $val) { }\n}\n";
     let map = parse_and_extract(php);

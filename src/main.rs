@@ -16,6 +16,13 @@ use tokio::net::TcpListener;
 #[cfg(not(target_arch = "wasm32"))]
 use tower_lsp_server::{LspService, Server};
 
+/// Whether hover on declarations is on when neither the
+/// `--hover-on-declarations` flag nor `initializationOptions` turns
+/// it on. Upstream this is off; a fork that wants the feature by
+/// default changes only this constant (and the flag's help text).
+#[cfg(not(target_arch = "wasm32"))]
+const DEFAULT_HOVER_ON_DECLARATIONS: bool = false;
+
 const STYLES: Styles = Styles::styled()
     .header(AnsiColor::Yellow.on_default().bold())
     .usage(AnsiColor::Yellow.on_default().bold())
@@ -46,6 +53,17 @@ struct Cli {
     /// connection and exits when the client disconnects.
     #[arg(long, value_name = "ADDR")]
     tcp: Option<String>,
+
+    /// Show hover on declarations.
+    ///
+    /// Declaration sites answer no hover by default. This turns
+    /// declaration hover on, for clients that navigate to
+    /// declarations rather than usages. The same setting can be
+    /// given per session as the hover.declarations key in
+    /// initializationOptions. It cannot be combined with a
+    /// subcommand.
+    #[arg(long)]
+    hover_on_declarations: bool,
 }
 
 #[derive(clap::Subcommand)]
@@ -336,8 +354,29 @@ fn main() {
     runtime.block_on(async_main());
 }
 
+/// The value handed to `Backend::with_hover_on_declarations`: the
+/// flag, or the built-in default when the flag is absent. An absent
+/// flag can never undo a true default, and `initializationOptions`
+/// can still turn the feature on later either way.
+#[cfg(not(target_arch = "wasm32"))]
+fn hover_on_declarations_setting(cli_flag: bool) -> bool {
+    cli_flag || DEFAULT_HOVER_ON_DECLARATIONS
+}
+
+/// Whether the parsed arguments combine
+/// `--hover-on-declarations` with a subcommand, which is a usage
+/// error: the flag only makes sense for the language server itself.
+fn hover_flag_with_subcommand(cli: &Cli) -> bool {
+    cli.hover_on_declarations && cli.command.is_some()
+}
+
 async fn async_main() {
     let cli = Cli::parse();
+
+    if hover_flag_with_subcommand(&cli) {
+        eprintln!("Error: --hover-on-declarations cannot be combined with a subcommand");
+        std::process::exit(2);
+    }
 
     match cli.command {
         Some(Command::Init { global, yes }) => {
@@ -548,7 +587,12 @@ async fn async_main() {
                 eprintln!("Client connected from {}", peer);
 
                 let (read, write) = tokio::io::split(stream);
-                let (service, socket) = LspService::build(Backend::new).finish();
+                let hover_on_declarations =
+                    hover_on_declarations_setting(cli.hover_on_declarations);
+                let (service, socket) = LspService::build(|client| {
+                    Backend::new(client).with_hover_on_declarations(hover_on_declarations)
+                })
+                .finish();
                 Server::new(read, write, socket)
                     .concurrency_level(LSP_CONCURRENCY)
                     .serve(service)
@@ -564,7 +608,12 @@ async fn async_main() {
                 let stdin = tokio::io::stdin();
                 let stdout = tokio::io::stdout();
 
-                let (service, socket) = LspService::build(Backend::new).finish();
+                let hover_on_declarations =
+                    hover_on_declarations_setting(cli.hover_on_declarations);
+                let (service, socket) = LspService::build(|client| {
+                    Backend::new(client).with_hover_on_declarations(hover_on_declarations)
+                })
+                .finish();
                 Server::new(stdin, stdout, socket)
                     .concurrency_level(LSP_CONCURRENCY)
                     .serve(service)
@@ -634,4 +683,72 @@ fn resolve_path_filter(path: std::path::PathBuf, error_exit_code: i32) -> std::p
         std::process::exit(error_exit_code);
     }
     abs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Cli {
+        Cli::try_parse_from(args).expect("arguments should parse")
+    }
+
+    #[test]
+    fn hover_on_declarations_flag_absent_by_default() {
+        let cli = parse(&["phpantom_lsp"]);
+        assert!(!cli.hover_on_declarations);
+        assert!(cli.command.is_none());
+        assert!(!hover_flag_with_subcommand(&cli));
+        assert_eq!(
+            hover_on_declarations_setting(cli.hover_on_declarations),
+            DEFAULT_HOVER_ON_DECLARATIONS
+        );
+    }
+
+    #[test]
+    fn hover_on_declarations_flag_present() {
+        let cli = parse(&["phpantom_lsp", "--hover-on-declarations"]);
+        assert!(cli.hover_on_declarations);
+        assert!(hover_on_declarations_setting(cli.hover_on_declarations));
+    }
+
+    #[test]
+    fn hover_on_declarations_flag_around_stdio() {
+        let before = parse(&["phpantom_lsp", "--hover-on-declarations", "--stdio"]);
+        assert!(before.hover_on_declarations);
+        assert!(before.stdio);
+
+        let after = parse(&["phpantom_lsp", "--stdio", "--hover-on-declarations"]);
+        assert!(after.hover_on_declarations);
+        assert!(after.stdio);
+    }
+
+    #[test]
+    fn hover_on_declarations_flag_with_tcp() {
+        let cli = parse(&[
+            "phpantom_lsp",
+            "--hover-on-declarations",
+            "--tcp",
+            "127.0.0.1:9257",
+        ]);
+        assert!(cli.hover_on_declarations);
+        assert_eq!(cli.tcp.as_deref(), Some("127.0.0.1:9257"));
+
+        let cli = parse(&["phpantom_lsp", "--tcp", "9257", "--hover-on-declarations"]);
+        assert!(cli.hover_on_declarations);
+        assert_eq!(cli.tcp.as_deref(), Some("9257"));
+    }
+
+    #[test]
+    fn hover_on_declarations_flag_with_subcommand_is_a_conflict() {
+        let cli = parse(&["phpantom_lsp", "--hover-on-declarations", "analyze"]);
+        assert!(cli.hover_on_declarations);
+        assert!(hover_flag_with_subcommand(&cli));
+    }
+
+    #[test]
+    fn hover_on_declarations_flag_after_subcommand_does_not_parse() {
+        let result = Cli::try_parse_from(["phpantom_lsp", "analyze", "--hover-on-declarations"]);
+        assert!(result.is_err());
+    }
 }

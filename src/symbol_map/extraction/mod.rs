@@ -203,7 +203,8 @@ impl<'a> ExtractionCtx<'a> {
     /// Record that the variable `name` (without `$`) is defined by the
     /// token at `offset`, visible from `effective_from` in the scope that
     /// starts at `scope_start`, inside the conditional block the walk is
-    /// currently in.
+    /// currently in.  Returns the record, for a caller that knows more
+    /// about the definition than its kind.
     fn push_var_def(
         &mut self,
         offset: u32,
@@ -211,7 +212,7 @@ impl<'a> ExtractionCtx<'a> {
         kind: VarDefKind,
         scope_start: u32,
         effective_from: u32,
-    ) {
+    ) -> &mut VarDefSite {
         self.var_defs.push(VarDefSite {
             offset,
             name,
@@ -224,18 +225,22 @@ impl<'a> ExtractionCtx<'a> {
                 .last()
                 .copied()
                 .unwrap_or(u32::MAX),
+            is_promoted: false,
         });
+        let last = self.var_defs.len() - 1;
+        &mut self.var_defs[last]
     }
 
     /// Record a variable token `[start, end)` that both navigates (a
     /// `Variable` span) and defines the variable, effective at once.
+    /// Returns the definition's record, as [`Self::push_var_def`] does.
     fn push_variable_definition(
         &mut self,
         (start, end): (u32, u32),
         name: String,
         kind: VarDefKind,
         scope_start: u32,
-    ) {
+    ) -> &mut VarDefSite {
         self.spans.push(SymbolSpan {
             start,
             end,
@@ -243,7 +248,7 @@ impl<'a> ExtractionCtx<'a> {
                 name: crate::atom::atom(&name),
             },
         });
-        self.push_var_def(start, name, kind, scope_start, start);
+        self.push_var_def(start, name, kind, scope_start, start)
     }
 
     /// Move string-key spans emitted since `start` into the dormant

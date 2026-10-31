@@ -20,6 +20,18 @@ in your editor and what CI reports.
 Running with no subcommand starts the language server. Editors launch
 this automatically.
 
+### `--hover-on-declarations`
+
+```sh
+phpantom_lsp --hover-on-declarations
+phpantom_lsp --stdio --hover-on-declarations
+phpantom_lsp --tcp 9257 --hover-on-declarations
+```
+
+Turns on hover at declaration sites (class-likes, methods, properties, class constants, enum cases, functions, top-level constants, and `@property` and `@method` tags), which answers nothing by default. It is off unless this flag is given or the client passes `{"hover": {"declarations": true}}` in `initializationOptions` (see [configuration.md](configuration.md#hover-on-declarations)); the two combine, and nothing turns it back off once on. The flag works in the default stdio mode, with `--stdio`, and with `--tcp`, in any order among those.
+
+The flag only makes sense for the language server itself, so combining it with a subcommand is a usage error: `phpantom_lsp --hover-on-declarations analyze …` exits with a non-zero code and a message naming the flag, and `phpantom_lsp analyze --hover-on-declarations` is rejected as an unknown argument.
+
 ---
 
 ## `move`

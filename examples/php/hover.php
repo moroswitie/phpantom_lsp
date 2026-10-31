@@ -37,3 +37,35 @@ class HoverOriginsDemo extends Scaffolding\Model implements Scaffolding\Renderab
     // Overrides the abstract toArray() from Scaffolding\Model
     public function toArray(): array { return []; }
 }
+
+// ── Hover: Declarations (opt-in) ────────────────────────────────────────────
+
+// Start the server with --hover-on-declarations (or pass
+// "initializationOptions": {"hover": {"declarations": true}}) for this block.
+// Without it, the hovers below answer nothing, as everywhere else.
+//
+// Try: hover on the `class` keyword below, on `DeclarationHoverDemo`, on
+// `MAX_GREETINGS`, on `greeting`, or on `DECLARATION_GREETING` — each shows
+// the same hover as hovering a use of it, instead of no hover at all.
+//
+// Try: hover on `$visits` in the constructor → the property it promotes
+// (`private int $visits`), not a variable; hover on `nickname` in the
+// `@property` tag → the same virtual `string` property `$demo->nickname`
+// shows.
+/**
+ * @property string $nickname
+ */
+class DeclarationHoverDemo
+{
+    public const MAX_GREETINGS = 3;
+
+    public function __construct(private int $visits = 0) {}
+
+    public function greeting(): string { return 'hello'; }
+
+    public function visits(): int { return $this->visits; }
+
+    public function __get(string $name): string { return 'Ada'; }
+}
+
+const DECLARATION_GREETING = 'hello';

@@ -19,6 +19,7 @@ use etcetera::BaseStrategy as _;
 use serde::Deserialize;
 
 mod diagnostics;
+mod hover;
 mod indexing;
 mod laravel;
 mod stubs;
@@ -27,6 +28,7 @@ mod tests;
 mod tools;
 
 pub use diagnostics::{DiagnosticsConfig, IgnoreRule};
+pub use hover::ClientHoverOptions;
 pub use indexing::{ClientIndexingOptions, IndexingConfig, IndexingStrategy};
 pub use laravel::{LaravelConfig, LaravelMigrationsConfig, LaravelSchemaConfig};
 pub use stubs::{ClientStubOptions, StubsConfig};
