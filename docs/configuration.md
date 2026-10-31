@@ -340,7 +340,7 @@ It is read from `initializationOptions` and `workspace/didChangeConfiguration`, 
 
 ## Hover on declarations
 
-With hover on declarations, hovering a class, interface, trait or enum (its name or its keyword), a method, a class constant, an enum case, a function or a top-level constant at the place it is declared shows the same hover as hovering a use of it, inherited documentation included. It is meant for clients that navigate to declarations rather than usages, such as AI coding agents; editor users see no change. It is off by default.
+With hover on declarations, hovering a class, interface, trait or enum (its name or its keyword), a method, a property (a promoted constructor property included), a class constant, an enum case, a function or a top-level constant at the place it is declared, or the name in a `@property` or `@method` tag, shows the same hover as hovering a use of it, inherited documentation included. It is meant for clients that navigate to declarations rather than usages, such as AI coding agents; editor users see no change. It is off by default.
 
 Turn it on for a session with the `hover.declarations` initialization option:
 
