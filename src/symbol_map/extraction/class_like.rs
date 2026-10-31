@@ -820,6 +820,8 @@ pub(super) fn extract_from_parameter<'a>(
     {
         let _found = extract_docblock_symbols(doc_text, doc_offset, &mut ctx.spans);
     }
+    // The same check `push_promoted_properties` makes, so the symbol map
+    // knows a promoted parameter even when the file's classes do not.
     ctx.push_variable_definition(
         (
             param.variable.span.start.offset,
@@ -828,7 +830,8 @@ pub(super) fn extract_from_parameter<'a>(
         bare_variable_name(param.variable.name),
         VarDefKind::Parameter,
         scope_start,
-    );
+    )
+    .is_promoted = param.is_promoted_property();
     if let Some(ref default) = param.default_value {
         extract_from_expression(default.value, ctx, scope_start);
     }
