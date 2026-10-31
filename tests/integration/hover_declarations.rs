@@ -10,8 +10,8 @@
 //! of the symbol answers, for that very declaration: where PHPantom
 //! holds another declaration of the same name instead, it answers
 //! `None`, never the other one's hover. Properties, promoted
-//! parameters and docblock `@property` / `@method` tags are not
-//! covered here; they still answer `None` with the switch on.
+//! parameters and docblock `@property` / `@method` tags are covered in
+//! `hover_declarations_members.rs`.
 
 use std::sync::Arc;
 
@@ -572,70 +572,6 @@ fn namespace_declaration_stays_suppressed_with_the_switch_on() {
     let content = "<?php\nnamespace App;\nclass Post {}\n";
     let (line, character) = inside(content, "App");
     assert!(hover_at(&on_backend(), "file:///test.php", content, line, character).is_none());
-}
-
-#[test]
-fn property_and_docblock_member_declarations_stay_suppressed_in_this_change() {
-    let content = r#"<?php
-/**
- * @property string $magicTitle
- * @method string magicRender()
- */
-class Post {
-    public string $title;
-    public function __construct(public string $sku) {}
-}
-"#;
-    let backend = on_backend();
-    for needle in ["$magicTitle", "magicRender", "$title", "$sku"] {
-        let (line, character) = inside(content, needle);
-        assert!(
-            hover_at(&backend, "file:///test.php", content, line, character).is_none(),
-            "{needle} is covered by a later change and stays suppressed here"
-        );
-    }
-}
-
-#[test]
-fn docblock_member_tags_inside_a_class_stay_suppressed_in_this_change() {
-    // A tag inside a class's span, whether in a docblock between the
-    // attributes and the keyword or in a method body above an
-    // anonymous class, declares no member of the enclosing class,
-    // even where that class has a real member of the same name.
-    let content = r#"<?php
-#[Attribute]
-/**
- * @method string attributed()
- * @property int $attributedTitle
- */
-class Tagged {
-    public function attributed(): string { return ''; }
-}
-class Outer {
-    public const LABEL = 'outer';
-    public function magic(): int { return 1; }
-    public function make(): object {
-        /**
-         * @method string magic()
-         * @property int $LABEL
-         */
-        return new class {};
-    }
-}
-"#;
-    let backend = on_backend();
-    for (search, token) in [
-        ("string attributed()", "attributed"),
-        ("int $attributedTitle", "attributedTitle"),
-        ("string magic()", "magic"),
-        ("int $LABEL", "LABEL"),
-    ] {
-        let hover = hover_inside_token(&backend, content, search, token);
-        assert!(
-            hover.is_none(),
-            "the tag {token} is covered by a later change and stays suppressed here, got: {hover:?}"
-        );
-    }
 }
 
 // ─── Declaration identity ───────────────────────────────────────────

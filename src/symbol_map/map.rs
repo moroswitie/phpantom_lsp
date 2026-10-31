@@ -118,6 +118,10 @@ pub(crate) struct VarDefSite {
     /// definition should not override a shallower one.  `u32::MAX`
     /// for top-level (depth 0) definitions.
     pub block_end: u32,
+    /// Whether this is a constructor parameter that a modifier
+    /// (`public`, `readonly`, …) promotes to a property, read from the
+    /// parameter's own syntax.  `false` for every other definition.
+    pub is_promoted: bool,
 }
 
 /// A closure or arrow function passed as an argument to a callable-typed
