@@ -331,9 +331,8 @@ impl Backend {
     }
 
     fn call_hierarchy_file(&self, uri: &str) -> Option<ParsedFile> {
-        let content = self.reference_file_content_arc(uri)?;
         if let Some(symbol_map) = self.symbol_map_for(uri) {
-            return Some((content, symbol_map));
+            return Some((self.reference_file_content_arc(uri)?, symbol_map));
         }
         // A call site can sit in a file the background indexer has not reached
         // yet.  Parse it now, the way the first request on a freshly opened
@@ -343,8 +342,15 @@ impl Backend {
         if self.is_blade_file(uri) {
             return None;
         }
-        self.update_ast(uri, &content);
-        Some((content, self.symbol_map_for(uri)?))
+        self.update_ast_fetched(uri, &self.file_text(uri)?);
+        // Read back rather than paired with the text just parsed: that
+        // publish steps aside for a buffer opened since, and the map then
+        // describes the buffer.
+        let symbol_map = self.symbol_map_for(uri)?;
+        let content = self.reference_file_content_arc(uri)?;
+        symbol_map
+            .matches_source(&content)
+            .then_some((content, symbol_map))
     }
 
     fn translate_item_to_blade(&self, item: &mut CallHierarchyItem) {

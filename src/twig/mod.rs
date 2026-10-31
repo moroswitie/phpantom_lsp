@@ -218,7 +218,7 @@ impl Backend {
                     // An open file that stopped being a template is read
                     // the way any other open file is.
                     Some(content) => {
-                        self.update_ast(&uri, &content);
+                        self.update_ast_buffer(&uri, &content);
                     }
                     None => self.clear_file_maps(&uri),
                 }

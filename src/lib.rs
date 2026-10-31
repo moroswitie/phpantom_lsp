@@ -470,6 +470,10 @@ pub struct BackendState {
     /// thread blocks until that parse completes and then reads the result
     /// from `uri_classes_index` instead of re-parsing.
     pub(crate) parse_inflight: Arc<resolution::ParseInflight>,
+    /// The publications of each file in progress, which keep a file's
+    /// buffer and disk copy from landing over each other out of order (see
+    /// [`parser::PublicationOrder`]).
+    pub(crate) publication_order: Arc<parser::PublicationOrder>,
     /// Embedded PHP stubs for built-in classes/interfaces (e.g. `UnitEnum`,
     /// `BackedEnum`, `Iterator`, `Countable`, …).
     /// Maps class short name → raw PHP source code.

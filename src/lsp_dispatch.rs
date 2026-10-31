@@ -105,11 +105,12 @@ impl LspDispatcher {
     /// Mirror the server's `did_open`: store the buffer (the handlers read it
     /// back through `get_file_content`) and parse/index it.
     fn store(&self, uri: String, text: String) {
+        let text = Arc::new(text);
         self.backend
             .open_files()
             .write()
-            .insert(uri.clone(), Arc::new(text.clone()));
-        self.backend.update_ast(&uri, &text);
+            .insert(uri.clone(), Arc::clone(&text));
+        self.backend.update_ast_buffer(&uri, &text);
     }
 
     fn did_open(&self, params: Value) {

@@ -115,8 +115,8 @@ impl Backend {
         // on publishes nothing and is retried, which is the same work its
         // next keystroke would do anyway.
         if !self.is_resource_uri(uri) && self.symbol_map_for(uri).is_none() {
-            let content = self.get_file_content(uri)?;
-            self.update_ast(uri, &content);
+            let content = self.file_text(uri)?;
+            self.update_ast_fetched(uri, &content);
         }
 
         // A template is analysed as the virtual PHP it lowers to, with the

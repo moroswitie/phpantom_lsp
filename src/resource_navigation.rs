@@ -138,11 +138,15 @@ impl Backend {
         if self.is_resource_uri(uri) {
             self.publish_resource_symbol_index(uri, content);
         } else if self.symbol_map_for(uri).is_some() {
-            // It stopped being a template.
-            if self.open_files.read().contains_key(uri) {
-                self.update_ast(uri, content);
-            } else {
-                self.clear_file_maps(uri);
+            // It stopped being a template.  An open file is read as its
+            // buffer, whatever text this update brought: the file watcher
+            // passes the disk copy.
+            let buffer = self.open_files.read().get(uri).cloned();
+            match buffer {
+                Some(buffer) => {
+                    self.update_ast_buffer(uri, &buffer);
+                }
+                None => self.clear_file_maps(uri),
             }
         }
     }

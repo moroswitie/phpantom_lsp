@@ -453,6 +453,56 @@ fn stale_scope_batch_does_not_clobber_a_fresher_reinference() {
     );
 }
 
+/// A re-inference still holding a buffer an edit has since replaced is
+/// not published, and leaves the scope cache alone too: the next edit is
+/// lowered from that cache, and would otherwise take the old layout's
+/// types.
+#[test]
+fn reinference_of_a_replaced_buffer_leaves_the_scope_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let views = root.join("resources/views");
+    std::fs::create_dir_all(views.join("layouts")).unwrap();
+    std::fs::write(
+        views.join("layouts/old.blade.php"),
+        "@php\n/** @var int $item */\n@endphp\n@yield('body')\n",
+    )
+    .unwrap();
+    std::fs::write(
+        views.join("layouts/new.blade.php"),
+        "@php\n/** @var string $item */\n@endphp\n@yield('body')\n",
+    )
+    .unwrap();
+    let new = "@extends('layouts.new')\n{{ $item }}\n";
+    let path = views.join("page.blade.php");
+    std::fs::write(&path, new).unwrap();
+    let uri = crate::util::path_to_uri(&path);
+    let backend = Backend::new_test_with_workspace(root, Vec::new());
+
+    let open = |text: String| {
+        let text = Arc::new(text);
+        backend
+            .open_files
+            .write()
+            .insert(uri.clone(), Arc::clone(&text));
+        backend.update_ast_buffer(&uri, &text);
+    };
+    open("@extends('layouts.old')\n{{ $item }}\n".to_owned());
+    let replaced = backend.file_text(&uri).unwrap();
+    open(new.to_owned());
+    assert!(backend.reinfer_and_reparse_blade(&uri, &backend.file_text(&uri).unwrap()));
+    let current = backend.blade_virtual_php_arc(&uri).unwrap();
+    assert!(current.contains("@var string $item"));
+
+    assert!(!backend.reinfer_and_reparse_blade(&uri, &replaced));
+    assert_eq!(backend.blade_virtual_php_arc(&uri).unwrap(), current);
+
+    open(format!("{new}\n"));
+    let next = backend.blade_virtual_php_arc(&uri).unwrap();
+    assert!(next.contains("@var string $item"));
+    assert!(!next.contains("@var int $item"));
+}
+
 /// A `belongsToMany` body with `->as(...)`, `->using(...)`, and
 /// `->withPivot(...)` must populate `belongs_to_many_pivots`, with the
 /// pivot class resolved to an FQN.

@@ -73,7 +73,7 @@ impl Backend {
             if let Some(path) = path
                 && let Some(content) = crate::util::read_php_source(&path)
             {
-                self.update_ast(&crate::util::path_to_uri(&path), &content);
+                self.update_ast_from_disk(&crate::util::path_to_uri(&path), &content);
                 if let Some(found) = self.symbols.global_defines.read().get(*name).map(&read) {
                     return Some(found);
                 }
@@ -95,7 +95,7 @@ impl Backend {
                 continue;
             }
             if let Some(content) = crate::util::read_php_source(path) {
-                self.update_ast(&uri, &content);
+                self.update_ast_from_disk(&uri, &content);
                 if let Some(found) = find_parsed() {
                     return Some(found);
                 }
