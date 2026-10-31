@@ -34,3 +34,37 @@ Add this to your `opencode.json` file. It will be invoked when the AI uses the e
 ```
 
 You can add additional extensions to invoke it on if appropriate for your project.
+
+## Hover on declarations
+
+Agents navigate mostly to declarations: workspace symbols, document symbols, go-to-definition, implementation and call hierarchy all hand back the place a symbol is declared. Hover there answers nothing by default, because an editor user is already looking at the declaration. An agent is not: without a hover it has to read the file to learn what PHPantom already knows, such as inherited documentation, resolved types and the owning class.
+
+Turn declaration hover on and hovering a class, interface, trait or enum (its name or its keyword), a method, a class constant, an enum case, a function or a top-level constant at its declaration shows the same hover as hovering a use of it. It is off by default and never changes what hovering a use shows.
+
+For Opencode, add the flag to the command:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "lsp": {
+    "php": {
+      "command": ["phpantom_lsp", "--stdio", "--hover-on-declarations"],
+      "extensions": [".php"]
+    }
+  }
+}
+```
+
+For a Claude Code plugin, add the flag to the server entry's `args` in its `.lsp.json`:
+
+```json
+"args": ["--hover-on-declarations"]
+```
+
+Either client can instead pass it per session as an initialization option, with no flag at all:
+
+```json
+"initializationOptions": { "hover": { "declarations": true } }
+```
+
+The feature is on when the flag or the option turns it on; nothing turns it back off. The option is read only during `initialize`. The browser (WASM) build does not support it: it has no command line and never reads `initializationOptions`, so it is ignored there.

@@ -340,7 +340,15 @@ It is read from `initializationOptions` and `workspace/didChangeConfiguration`, 
 
 ## Hover on declarations
 
-The `hover.declarations` initialization option (`{"hover": {"declarations": true}}`, also accepted under a `phpantom` key) is read only during `initialize`, never from `workspace/didChangeConfiguration`. The browser (WASM) build does not support it: it never reads `initializationOptions` and has no command line, so the option is ignored there.
+With hover on declarations, hovering a class, interface, trait or enum (its name or its keyword), a method, a class constant, an enum case, a function or a top-level constant at the place it is declared shows the same hover as hovering a use of it, inherited documentation included. It is meant for clients that navigate to declarations rather than usages, such as AI coding agents; editor users see no change. It is off by default.
+
+Turn it on for a session with the `hover.declarations` initialization option:
+
+```json
+{ "hover": { "declarations": true } }
+```
+
+The same shape is accepted under a `phpantom` key. It is read only during `initialize`, never from `workspace/didChangeConfiguration`; a missing, non-object or non-boolean value counts as not set. The server can also be started with `--hover-on-declarations` (see [cli.md](cli.md)). The feature is on when either route turns it on, and nothing turns it back off. The browser (WASM) build does not support it: it never reads `initializationOptions` and has no command line, so the option is ignored there.
 
 ## Code Formatting
 

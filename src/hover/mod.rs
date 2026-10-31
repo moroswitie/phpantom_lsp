@@ -133,6 +133,17 @@ impl Backend {
             return Some(hover);
         }
 
+        // A class-like keyword has no symbol-map span, so declaration
+        // hover on it finds the class by position.
+        if self.hover_on_declarations_enabled()
+            && let Some(Some(hover)) =
+                crate::util::catch_panic_unwind_safe("hover", uri, Some(position), || {
+                    self.hover_class_keyword(uri, content, offset)
+                })
+        {
+            return Some(hover);
+        }
+
         // ── model-property<Model> string hover ─────────────────
         // When the cursor is inside a string argument whose parameter
         // is typed as model-property<Model>, show the property's type
@@ -249,8 +260,31 @@ impl Backend {
             SymbolKind::SelfStaticParent(ssp_kind) => {
                 self.hover_self_static_parent(&site, *ssp_kind)
             }
-            // The user is already at the declaration: hover would just
-            // repeat the signature, docblock or value that is on screen.
+            // Declaration sites answer nothing unless hover on
+            // declarations is on: the signature, docblock or value is
+            // already on screen there. Namespace declarations stay
+            // suppressed either way.
+            SymbolKind::ClassDeclaration { name } if self.hover_on_declarations_enabled() => {
+                self.hover_class_declaration(&site, symbol.start, name)
+            }
+            SymbolKind::MemberDeclaration {
+                name, is_method, ..
+            } if self.hover_on_declarations_enabled() => {
+                self.hover_member_declaration(&site, symbol.start, name, *is_method)
+            }
+            SymbolKind::FunctionCall {
+                is_definition: true,
+                name,
+                ..
+            } if self.hover_on_declarations_enabled() => {
+                self.hover_function_declaration(&site, symbol.start, name)
+            }
+            SymbolKind::ConstantReference {
+                is_definition: true,
+                name,
+            } if self.hover_on_declarations_enabled() => {
+                self.hover_constant_declaration(&site, symbol.start, name)
+            }
             SymbolKind::ClassDeclaration { .. }
             | SymbolKind::MemberDeclaration { .. }
             | SymbolKind::NamespaceDeclaration { .. }

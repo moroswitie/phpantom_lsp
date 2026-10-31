@@ -1319,6 +1319,12 @@ function runDemoAssertions(): void
     assert(method_exists($hod, 'toArray'), 'HoverOriginsDemo must have toArray()');
     assert(method_exists($hod, 'getName'), 'HoverOriginsDemo must inherit getName()');
 
+    // ── DeclarationHoverDemo (hover.php) ─────────────────────────────────
+    $declarationDemo = new DeclarationHoverDemo();
+    assert($declarationDemo->greeting() === 'hello', 'DeclarationHoverDemo::greeting() must return the string its declaration shows');
+    assert(DeclarationHoverDemo::MAX_GREETINGS === 3, 'DeclarationHoverDemo::MAX_GREETINGS must be the int 3 its declaration shows');
+    assert(DECLARATION_GREETING === 'hello', 'DECLARATION_GREETING must be the string its declaration shows');
+
     // ── Switch statement type tracking ──────────────────────────────────
     $switchType = 'reviews';
     switch ($switchType) {
