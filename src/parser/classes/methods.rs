@@ -221,10 +221,8 @@ fn push_promoted_properties<'a>(
         //    (e.g. `/** @var array<User> */ public array $users`).
         // 2. `@param` on the constructor docblock
         //    (e.g. `@param list<User> $users`).
-        let inline_docblock_info = doc_ctx.and_then(|ctx| {
-            let doc = docblock::get_docblock_text_for_node(ctx.trivias, ctx.content, param)?;
-            docblock::parse_docblock_for_tags(doc)
-        });
+        let inline_docblock_info = doc_ctx
+            .and_then(|ctx| docblock::get_docblock_info_for_node(ctx.trivias, ctx.content, param));
         let inline_var_type = inline_docblock_info
             .as_ref()
             .and_then(docblock::extract_var_type_from_info);

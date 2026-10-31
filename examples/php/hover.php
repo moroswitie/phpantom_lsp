@@ -71,7 +71,3 @@ class HoverPromotedDescriptionsDemo
         echo $this->both;
     }
 }
-
-$promotedDescriptions = new HoverPromotedDescriptionsDemo(1, 2, 3, 4);
-// Try: hover on `both` → "Own description for both." (its own docblock wins over @param)
-echo $promotedDescriptions->both;
