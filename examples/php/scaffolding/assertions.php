@@ -1327,6 +1327,11 @@ function runDemoAssertions(): void
     assert($declarationDemo->visits() === 0, 'DeclarationHoverDemo::$visits must be the int its promoted parameter shows');
     assert($declarationDemo->nickname === 'Ada', 'DeclarationHoverDemo::$nickname must be the string its @property tag shows');
 
+    $realProperty = new \ReflectionProperty(HoverRealPropertyDemo::class, 'items');
+    assert($realProperty->isPrivate(), 'the real property keeps its private visibility');
+    assert((string) $realProperty->getType() === 'array', 'the real property declares array');
+    assert((new HoverRealPropertyDemo())->demo() === ['paper'], 'the hover demo reads the real property');
+
     // ── Switch statement type tracking ──────────────────────────────────
     $switchType = 'reviews';
     switch ($switchType) {

@@ -200,6 +200,7 @@ mod framework_resources;
 mod hover;
 mod hover_declarations;
 mod hover_declarations_members;
+mod hover_property_precedence;
 mod implementation;
 mod indexing_include;
 mod indexing_open_files;

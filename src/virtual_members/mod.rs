@@ -159,8 +159,9 @@ pub trait VirtualMemberProvider {
 /// refines the real `newQueryWithoutScopes` declaration in place.
 ///
 /// Properties are deduplicated by name.  When a property with the same
-/// name already exists, the **more specific** type wins regardless of
-/// which provider contributed it.  Specificity is ranked as:
+/// name already exists, a real declared property keeps precedence. Between
+/// virtual properties, the **more specific** type wins regardless of which
+/// provider contributed it. Specificity is ranked as:
 ///
 ///   `array<int, string>` > `array` > `mixed` > (absent)
 ///
@@ -177,9 +178,9 @@ pub trait VirtualMemberProvider {
 ///
 /// Constants are deduplicated by name only.
 ///
-/// This ensures that real declared members (and contributions from
-/// higher-priority providers that were merged earlier) are never
-/// overwritten, unless the incoming property carries a more specific type.
+/// Real declared properties are never overwritten. Higher-priority virtual
+/// properties keep precedence unless the incoming property carries a more
+/// specific type or explicitly overrides an inferred type as described above.
 pub fn merge_virtual_members(class: &mut ClassInfo, virtual_members: VirtualMembers) {
     // Build an index of (name, is_static) → position for O(1) dedup
     // instead of a linear scan per virtual method.  With hundreds of
@@ -222,6 +223,9 @@ pub fn merge_virtual_members(class: &mut ClassInfo, virtual_members: VirtualMemb
 
     for property in virtual_members.properties {
         if let Some(&idx) = prop_index.get(&property.name.to_string()) {
+            if !class.properties[idx].is_virtual {
+                continue;
+            }
             // The property already exists.  Replace it only when the
             // incoming property carries a strictly more specific type.
             // This lets PHPDoc `@property array<string> $tags` override
