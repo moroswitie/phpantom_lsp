@@ -536,7 +536,7 @@ impl Backend {
         let code = build_class_member_block(
             &owner.name,
             owner.file_namespace.as_deref(),
-            owner_kind_keyword(owner),
+            class_header_keyword(owner),
             &owner_name_suffix(owner),
             member_line,
         );
@@ -626,6 +626,7 @@ impl Backend {
 
         let visibility = format_visibility(method.visibility);
         let static_kw = if method.is_static { "static " } else { "" };
+        let modifier_kw = method_modifier_keyword(method, owner);
         let native_params = format_native_params(&method.parameters);
 
         // Use native return type in the code block, effective type as docblock annotation.
@@ -636,8 +637,8 @@ impl Backend {
             .unwrap_or_default();
 
         let member_line = format!(
-            "{}{}function {}({}){};",
-            visibility, static_kw, method.name, native_params, native_ret
+            "{}{}{}function {}({}){};",
+            modifier_kw, visibility, static_kw, method.name, native_params, native_ret
         );
 
         let mut lines = Vec::new();
@@ -714,6 +715,11 @@ impl Backend {
     ) -> Hover {
         let visibility = format_visibility(property.visibility);
         let static_kw = if property.is_static { "static " } else { "" };
+        let readonly_kw = if property.is_readonly {
+            "readonly "
+        } else {
+            ""
+        };
 
         // Use native type hint in the code block, effective type as docblock annotation.
         let native_type = property
@@ -723,8 +729,8 @@ impl Backend {
             .unwrap_or_default();
 
         let member_line = format!(
-            "{}{}{}${};",
-            visibility, static_kw, native_type, property.name
+            "{}{}{}{}${};",
+            visibility, static_kw, readonly_kw, native_type, property.name
         );
 
         let var_section = build_var_section(

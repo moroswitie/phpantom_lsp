@@ -8,7 +8,7 @@ use crate::types::FunctionInfo;
 
 use super::HoverSite;
 use super::formatting::hover_for_function;
-use super::member::HoverMemberHit;
+use super::member::{HoverMemberHit, MemberKindForOrigin, find_declaring_class};
 
 impl Backend {
     /// Hover for a function call or a `@see name()` reference.
@@ -36,13 +36,31 @@ impl Backend {
         {
             return Some(match hit {
                 HoverMemberHit::Method(m) => {
-                    self.hover_for_method(&m, &class, &resolved_class_loader, uri, content)
+                    let declaring = find_declaring_class(
+                        &class,
+                        &m.name,
+                        &MemberKindForOrigin::Method,
+                        &resolved_class_loader,
+                    );
+                    self.hover_for_method(&m, &declaring, &resolved_class_loader, uri, content)
                 }
                 HoverMemberHit::Property(p) => {
-                    self.hover_for_property(&p, &class, &resolved_class_loader)
+                    let declaring = find_declaring_class(
+                        &class,
+                        &p.name,
+                        &MemberKindForOrigin::Property,
+                        &resolved_class_loader,
+                    );
+                    self.hover_for_property(&p, &declaring, &resolved_class_loader)
                 }
                 HoverMemberHit::Constant(c) => {
-                    self.hover_for_constant(&c, &class, &resolved_class_loader)
+                    let declaring = find_declaring_class(
+                        &class,
+                        &c.name,
+                        &MemberKindForOrigin::Constant,
+                        &resolved_class_loader,
+                    );
+                    self.hover_for_constant(&c, &declaring, &resolved_class_loader)
                 }
             });
         }

@@ -168,20 +168,7 @@ impl Backend {
 
     /// Build hover content for a class/interface/trait/enum.
     pub(crate) fn hover_for_class_info(&self, cls: &ClassInfo, uri: &str, content: &str) -> Hover {
-        let kind_str = match cls.kind {
-            ClassLikeKind::Class => {
-                if cls.is_abstract {
-                    "abstract class"
-                } else if cls.is_final {
-                    "final class"
-                } else {
-                    "class"
-                }
-            }
-            ClassLikeKind::Interface => "interface",
-            ClassLikeKind::Trait => "trait",
-            ClassLikeKind::Enum => "enum",
-        };
+        let kind_str = class_header_keyword(cls);
 
         let mut extends_implements = String::new();
 
@@ -339,14 +326,15 @@ fn build_trait_summary_body(cls: &ClassInfo) -> String {
             continue;
         }
         let static_kw = if prop.is_static { "static " } else { "" };
+        let readonly_kw = if prop.is_readonly { "readonly " } else { "" };
         let native_type = prop
             .native_type_hint
             .as_ref()
             .map(|t| format!("{} ", t))
             .unwrap_or_default();
         member_lines.push(format!(
-            "    public {}{}${};",
-            static_kw, native_type, prop.name
+            "    public {}{}{}${};",
+            static_kw, readonly_kw, native_type, prop.name
         ));
     }
 
@@ -355,6 +343,7 @@ fn build_trait_summary_body(cls: &ClassInfo) -> String {
             continue;
         }
         let static_kw = if method.is_static { "static " } else { "" };
+        let modifier_kw = method_modifier_keyword(method, cls);
         let native_params = format_native_params(&method.parameters);
         let native_ret = method
             .native_return_type
@@ -362,8 +351,8 @@ fn build_trait_summary_body(cls: &ClassInfo) -> String {
             .map(|r| format!(": {}", r))
             .unwrap_or_default();
         member_lines.push(format!(
-            "    public {}function {}({}){};",
-            static_kw, method.name, native_params, native_ret
+            "    {}public {}function {}({}){};",
+            modifier_kw, static_kw, method.name, native_params, native_ret
         ));
     }
 
