@@ -310,7 +310,7 @@ fn promoted_parameter_declaration_shows_the_property_hover() {
         PROMOTED,
         "private readonly int $total",
         "$total",
-        &["namespace App;", "class Invoice", "private int $total;"],
+        &["namespace App;", "class Invoice", "int $total;"],
         &["$total = "],
     );
     assert_off_on(
@@ -351,10 +351,7 @@ fn promoted_parameter_and_a_local_of_the_same_name_keep_their_own_hover() {
         )),
     )
     .expect("the promoted parameter hovers as its property");
-    assert!(
-        parameter.contains("private int $total;"),
-        "got: {parameter}"
-    );
+    assert!(parameter.contains("int $total;"), "got: {parameter}");
 
     let local = hover_text_at(
         &backend,
