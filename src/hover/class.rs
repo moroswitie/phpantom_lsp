@@ -7,10 +7,10 @@
 
 use std::sync::Arc;
 
-use tower_lsp_server::gen_lsp_types::Hover;
+use tower_lsp_server::gen_lsp_types::{Hover, Range};
 
 use crate::Backend;
-use crate::class_lookup::Fqn;
+use crate::class_lookup::{Fqn, ResolvedClassLoader};
 use crate::docblock::extract_template_params_full;
 use crate::symbol_map::{ClassRefContext, SelfStaticParentKind};
 use crate::types::*;
@@ -70,6 +70,101 @@ impl Backend {
         }
 
         self.hover_class_reference(name, uri, content, &class_loader, cursor_offset)
+    }
+
+    /// Hover for a class-like name at its declaration site: the class
+    /// declared there, rendered exactly as a reference to it.
+    ///
+    /// The class is found by position, never by name, and answers only
+    /// when it is the declaration its name resolves to (see
+    /// [`is_resolved_class_declaration`](Self::is_resolved_class_declaration)).
+    pub(super) fn hover_class_declaration(
+        &self,
+        site: &HoverSite,
+        symbol_start: u32,
+        name: &str,
+    ) -> Option<Hover> {
+        let class = class_declared_at(&site.ctx.classes, symbol_start).filter(|class| {
+            class.name == name
+                && self.is_resolved_class_declaration(
+                    class,
+                    site.uri,
+                    site.loaders.resolved_class_loader(),
+                )
+        })?;
+        Some(self.hover_for_class_info(class, site.uri, site.content))
+    }
+
+    /// Whether `class`, declared in `uri`, is the declaration every
+    /// lookup of its name lands on: the class index holds this file for
+    /// the name, no stub path declares the name in another file (a stub
+    /// path wins over the index for the class loader, but not for the
+    /// provenance line), and `class_loader` answers with the class
+    /// written at this position.
+    ///
+    /// A declaration hover renders the class, and merges its inherited
+    /// members, through lookups by name. Only a declaration they all
+    /// agree on can be described as itself; any other declaration of
+    /// the name (in another file, in another branch of a version guard,
+    /// or one a stub path overrides, and that stub itself) answers
+    /// nothing. An anonymous class has no index entry, but its name
+    /// carries its file and offset, so a lookup by it can find no other
+    /// class: when the loader misses it, the resolver keeps the class
+    /// it was given.
+    pub(super) fn is_resolved_class_declaration(
+        &self,
+        class: &ClassInfo,
+        uri: &str,
+        class_loader: &ResolvedClassLoader<'_>,
+    ) -> bool {
+        if class.name.starts_with(ANONYMOUS_CLASS_PREFIX) {
+            return true;
+        }
+        let fqn = class.fqn();
+        self.class_declaration_uri(fqn.as_str()).as_deref() == Some(uri)
+            && self
+                .external_stub_class_uri(fqn.as_str())
+                .is_none_or(|stub_uri| stub_uri == uri)
+            && class_loader(Fqn::new(fqn.as_str()))
+                .is_some_and(|loaded| loaded.keyword_offset == class.keyword_offset)
+    }
+
+    /// Hover for a class-like keyword (`class`, `interface`, `trait`
+    /// or `enum`) at its declaration site. The keyword has no
+    /// symbol-map span, so the class is found by position, as for its
+    /// name; modifiers before the keyword are not hover positions. A
+    /// cursor just past the keyword still reads as on it, the same
+    /// end-of-token retry the symbol-map lookup makes. The hover range
+    /// is the keyword token itself. Like the name, the keyword answers
+    /// only for the declaration its name resolves to.
+    pub(super) fn hover_class_keyword(
+        &self,
+        uri: &str,
+        content: &str,
+        offset: u32,
+    ) -> Option<Hover> {
+        let ctx = self.file_context_at(uri, offset);
+        let class = class_declared_at(&ctx.classes, offset).filter(|class| {
+            self.is_resolved_class_declaration(class, uri, &self.resolved_class_loader(&ctx))
+        })?;
+        let keyword = owner_kind_keyword(class);
+        let start = class.keyword_offset as usize;
+        let end = start + keyword.len();
+        // The keyword is checked against the text as well, in case the
+        // parsed classes lag behind an edit.
+        if offset as usize > end
+            || !content
+                .get(start..end)
+                .is_some_and(|text| text.eq_ignore_ascii_case(keyword))
+        {
+            return None;
+        }
+        let mut hover = self.hover_for_class_info(class, uri, content);
+        hover.range = Some(Range {
+            start: crate::text_position::offset_to_position(content, start),
+            end: crate::text_position::offset_to_position(content, end),
+        });
+        Some(hover)
     }
 
     /// Hover for `self`, `static`, `parent` or `$this`: the class the
@@ -271,6 +366,15 @@ impl Backend {
 
         make_hover(lines.join("\n\n"))
     }
+}
+
+/// The named class-like whose declaration header, from its keyword up
+/// to its body's opening brace, contains `offset`. Anonymous classes
+/// record no keyword offset and never match.
+fn class_declared_at(classes: &[Arc<ClassInfo>], offset: u32) -> Option<&ClassInfo> {
+    classes.iter().map(Arc::as_ref).find(|class| {
+        class.keyword_offset != 0 && (class.keyword_offset..class.start_offset).contains(&offset)
+    })
 }
 
 /// Maximum number of enum cases or trait methods to show before

@@ -35,6 +35,45 @@ impl Backend {
             .map(Arc::clone)
     }
 
+    /// The URI of the stub path file that declares the class `fqn`, or
+    /// `None` when no stub path declares it.
+    pub(crate) fn external_stub_class_uri(&self, fqn: &str) -> Option<String> {
+        if !self.has_external_stubs() {
+            return None;
+        }
+        let stubs = self.external_stubs.read();
+        stubs
+            .classes
+            .get(fqn)
+            .map(|path| crate::util::path_to_uri(path))
+    }
+
+    /// The URI of the stub path file that declares the function `fqn`,
+    /// or `None` when no stub path declares it.
+    pub(crate) fn external_stub_function_uri(&self, fqn: &str) -> Option<String> {
+        if !self.has_external_stubs() {
+            return None;
+        }
+        let stubs = self.external_stubs.read();
+        stubs
+            .functions
+            .get(fqn)
+            .map(|path| crate::util::path_to_uri(path))
+    }
+
+    /// The URI of the stub path file that declares the constant `name`,
+    /// or `None` when no stub path declares it.
+    pub(crate) fn external_stub_constant_uri(&self, name: &str) -> Option<String> {
+        if !self.has_external_stubs() {
+            return None;
+        }
+        let stubs = self.external_stubs.read();
+        stubs
+            .constants
+            .get(name)
+            .map(|path| crate::util::path_to_uri(path))
+    }
+
     /// The function the first of `candidates` a stub path declares names
     /// there, or `None` when no stub path declares any of them.
     pub(super) fn load_external_stub_function(&self, candidates: &[&str]) -> Option<FunctionInfo> {
