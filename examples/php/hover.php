@@ -37,3 +37,37 @@ class HoverOriginsDemo extends Scaffolding\Model implements Scaffolding\Renderab
     // Overrides the abstract toArray() from Scaffolding\Model
     public function toArray(): array { return []; }
 }
+
+// ── Hover: promoted property descriptions ───────────────────────────────────
+
+class HoverPromotedDescriptionsDemo
+{
+    /**
+     * @param int $fromParam Param description.
+     * @param int $both Param description for both.
+     */
+    public function __construct(
+        /** Own summary. */
+        public int $ownSummary,
+        /** @var int Own var description. */
+        public int $ownVar,
+        public int $fromParam,
+        /** Own description for both. */
+        public int $both,
+    ) {}
+
+    public function demo(): void
+    {
+        // Hover on `ownSummary` → "Own summary." (its own docblock)
+        echo $this->ownSummary;
+
+        // Hover on `ownVar` → "Own var description." (its own @var)
+        echo $this->ownVar;
+
+        // Hover on `fromParam` → "Param description." (the constructor's @param)
+        echo $this->fromParam;
+
+        // Hover on `both` → "Own description for both." (its own docblock wins over @param)
+        echo $this->both;
+    }
+}

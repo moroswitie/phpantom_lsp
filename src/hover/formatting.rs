@@ -515,6 +515,12 @@ pub(crate) fn extract_var_description_from_info(info: &DocblockInfo) -> Option<S
     Some(after_var.to_string())
 }
 
+/// Extract a property's description from its docblock summary, falling back
+/// to the `@var` tag's description when there is no summary.
+pub(crate) fn extract_property_description_from_info(info: &DocblockInfo) -> Option<String> {
+    extract_description_from_info(info).or_else(|| extract_var_description_from_info(info))
+}
+
 /// Skip past a type token in a docblock string, respecting `<…>` nesting.
 ///
 /// Returns the remainder of the string after the type token.

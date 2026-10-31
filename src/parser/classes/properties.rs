@@ -94,11 +94,7 @@ pub(super) fn extract_property(
         }
         let description = info
             .as_ref()
-            .and_then(crate::hover::extract_description_from_info)
-            .or_else(|| {
-                info.as_ref()
-                    .and_then(crate::hover::extract_var_description_from_info)
-            });
+            .and_then(crate::hover::extract_property_description_from_info);
         if description.is_some() {
             for prop in &mut prop_infos {
                 prop.description = description.clone();
