@@ -198,6 +198,7 @@ mod formatting_blade;
 mod formatting_range;
 mod framework_resources;
 mod hover;
+mod hover_property_precedence;
 mod implementation;
 mod indexing_include;
 mod indexing_phar;

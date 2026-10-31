@@ -1319,6 +1319,11 @@ function runDemoAssertions(): void
     assert(method_exists($hod, 'toArray'), 'HoverOriginsDemo must have toArray()');
     assert(method_exists($hod, 'getName'), 'HoverOriginsDemo must inherit getName()');
 
+    $realProperty = new \ReflectionProperty(HoverRealPropertyDemo::class, 'items');
+    assert($realProperty->isPrivate(), 'the real property keeps its private visibility');
+    assert((string) $realProperty->getType() === 'array', 'the real property declares array');
+    assert((new HoverRealPropertyDemo())->demo() === ['paper'], 'the hover demo reads the real property');
+
     // ── Switch statement type tracking ──────────────────────────────────
     $switchType = 'reviews';
     switch ($switchType) {
