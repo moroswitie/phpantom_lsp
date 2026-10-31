@@ -610,11 +610,11 @@ fn retype_documented_properties(class: &ClassInfo, merged: &mut ClassInfo) {
     let Some(doc) = class.doc_members.as_deref() else {
         return;
     };
-    for (name, type_hint) in &doc.properties {
-        let Some(hint) = type_hint else {
+    for property in &doc.properties {
+        let Some(hint) = &property.type_hint else {
             continue;
         };
-        if class.properties.iter().any(|p| p.name == *name) {
+        if class.properties.iter().any(|p| p.name == property.name) {
             continue;
         }
         // Look the index up immutably so a class with nothing to
@@ -622,7 +622,7 @@ fn retype_documented_properties(class: &ClassInfo, merged: &mut ClassInfo) {
         let Some(idx) = merged
             .properties
             .iter()
-            .position(|p| p.name == *name && p.visibility != Visibility::Public)
+            .position(|p| p.name == property.name && p.visibility != Visibility::Public)
         else {
             continue;
         };
