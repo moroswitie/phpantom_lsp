@@ -4,9 +4,10 @@ use crate::common::{
     create_psr4_workspace, create_test_backend, create_test_backend_with_closure_stub,
     create_test_backend_with_full_stubs, create_test_backend_with_function_stubs,
     create_test_backend_with_stdclass_stub, hover_at, hover_response, hover_text, markup_hover_at,
-    open_php,
+    open_php, position_after,
 };
 use phpantom_lsp::Backend;
+use tower_lsp_server::LanguageServer;
 use tower_lsp_server::gen_lsp_types::*;
 
 // ─── Multi-namespace hover ──────────────────────────────────────────────────
@@ -3233,6 +3234,344 @@ class Zoo {
         "should show effective docblock type as var detail line: {}",
         text
     );
+}
+
+#[test]
+fn hover_promoted_property_description_sources() {
+    let cases = [
+        (
+            "own summary",
+            "/** Own summary. */",
+            "",
+            "int",
+            "Own summary.",
+            "",
+        ),
+        (
+            "own var",
+            "/** @var int Own var description. */",
+            "",
+            "int",
+            "Own var description.",
+            "",
+        ),
+        (
+            "constructor param",
+            "",
+            "/** @param int $name Param description. */",
+            "int",
+            "Param description.",
+            "",
+        ),
+        (
+            "own summary wins",
+            "/** Own summary. */",
+            "/** @param int $name Param description. */",
+            "int",
+            "Own summary.",
+            "",
+        ),
+        (
+            "own var wins",
+            "/** @var int Own var description. */",
+            "/** @param int $name Param description. */",
+            "int",
+            "Own var description.",
+            "",
+        ),
+        (
+            "summary before var",
+            "/**\n * Own summary.\n * @var int Own var description.\n */",
+            "/** @param int $name Param description. */",
+            "int",
+            "Own summary.",
+            "",
+        ),
+        (
+            "type-only own docblock",
+            "/** @var list<int> */",
+            "/** @param array<string> $name Param description. */",
+            "array",
+            "Param description.",
+            "**var** `list<int>`\n\n",
+        ),
+        (
+            "multiline param",
+            "",
+            "/**\n * @param int $name First line\n *     continues here.\n */",
+            "int",
+            "First line continues here.",
+            "",
+        ),
+        (
+            "summary HTML",
+            "/** Own <b>summary</b>. */",
+            "",
+            "int",
+            "Own **summary**.",
+            "",
+        ),
+        (
+            "param HTML",
+            "",
+            "/** @param int $name Param <b>description</b>. */",
+            "int",
+            "Param description.",
+            "",
+        ),
+        ("no docblock", "", "", "int", "", ""),
+        (
+            "no description",
+            "/** @var int */",
+            "/** @param int $name */",
+            "int",
+            "",
+            "",
+        ),
+    ];
+
+    for (case, own_doc, constructor_doc, native_type, description, var_section) in cases {
+        let backend = create_test_backend();
+        let content = format!(
+            "<?php
+class Promoted {{
+    {constructor_doc}
+    public function __construct(
+        {own_doc}
+        public {native_type} $name,
+    ) {{}}
+    public function show(): void {{
+        echo $this->name;
+    }}
+}}
+$p = new Promoted({});
+echo $p->name;
+",
+            if native_type == "array" { "[]" } else { "1" },
+        );
+        let prefix = if description.is_empty() {
+            String::new()
+        } else {
+            format!("{description}\n\n")
+        };
+        let expected = format!(
+            "{prefix}{var_section}```php\n<?php\nclass Promoted {{\n    public {native_type} $name;\n}}\n```"
+        );
+        for usage in ["$this->na", "$p->na"] {
+            let position = position_after(&content, usage);
+            let hover = hover_at(
+                &backend,
+                "file:///test.php",
+                &content,
+                position.line,
+                position.character,
+            )
+            .unwrap_or_else(|| panic!("expected hover for {case} at {usage}"));
+            assert_eq!(hover_text(&hover), expected, "{case} at {usage}");
+        }
+    }
+}
+
+#[test]
+fn hover_promoted_property_description_is_inherited() {
+    for (own_doc, constructor_doc) in [
+        ("/** Inherited description. */", ""),
+        ("", "/** @param int $name Inherited description. */"),
+    ] {
+        let backend = create_test_backend();
+        let content = format!(
+            "<?php
+class ParentModel {{
+    {constructor_doc}
+    public function __construct(
+        {own_doc}
+        public int $name,
+    ) {{}}
+}}
+class ChildModel extends ParentModel {{}}
+$child = new ChildModel(1);
+echo $child->name;
+"
+        );
+        let position = position_after(&content, "$child->na");
+        let hover = hover_at(
+            &backend,
+            "file:///test.php",
+            &content,
+            position.line,
+            position.character,
+        )
+        .expect("expected hover on inherited promoted property");
+        assert_eq!(
+            hover_text(&hover),
+            "Inherited description.\n\n```php\n<?php\nclass ParentModel {\n    public int $name;\n}\n```"
+        );
+    }
+}
+
+#[tokio::test]
+async fn hover_promoted_property_description_updates_across_files() {
+    for (own_doc, constructor_doc) in [
+        ("/** Old description. */", ""),
+        ("", "/** @param int $name Old description. */"),
+    ] {
+        let backend = create_test_backend();
+        let class_uri = Uri::parse("file:///Promoted.php").unwrap();
+        let usage_uri = Uri::parse("file:///usage.php").unwrap();
+        let declaration = format!(
+            "<?php
+class Promoted {{
+    {constructor_doc}
+    public function __construct(
+        {own_doc}
+        public int $name,
+    ) {{}}
+}}
+"
+        );
+        let usage = "<?php\n$p = new Promoted(1);\necho $p->name;\n";
+        open_php(&backend, &class_uri, &declaration).await;
+        open_php(&backend, &usage_uri, usage).await;
+        let position = position_after(usage, "$p->na");
+        let before = markup_hover_at(&backend, &usage_uri, position.line, position.character).await;
+        assert_eq!(
+            before,
+            "Old description.\n\n```php\n<?php\nclass Promoted {\n    public int $name;\n}\n```"
+        );
+
+        backend
+            .did_change(DidChangeTextDocumentParams {
+                text_document: VersionedTextDocumentIdentifier {
+                    text_document_identifier: TextDocumentIdentifier { uri: class_uri },
+                    version: 2,
+                },
+                content_changes: vec![
+                    TextDocumentContentChangeEvent::TextDocumentContentChangeWholeDocument(
+                        TextDocumentContentChangeWholeDocument {
+                            text: declaration.replace("Old description.", "New description."),
+                        },
+                    ),
+                ],
+            })
+            .await;
+
+        let after = markup_hover_at(&backend, &usage_uri, position.line, position.character).await;
+        assert_eq!(
+            after,
+            "New description.\n\n```php\n<?php\nclass Promoted {\n    public int $name;\n}\n```"
+        );
+    }
+}
+
+#[tokio::test]
+async fn hover_promoted_property_keeps_constructor_argument_description() {
+    let backend = create_test_backend();
+    let uri = Uri::parse("file:///test.php").unwrap();
+    let content = r#"<?php
+class Promoted {
+    /** @param int $name Constructor argument description. */
+    public function __construct(
+        /** Own property description. */
+        public int $name,
+    ) {}
+}
+$p = new Promoted(1);
+"#;
+    open_php(&backend, &uri, content).await;
+    let position = position_after(content, "new Promo");
+    let hover = markup_hover_at(&backend, &uri, position.line, position.character).await;
+    assert!(
+        hover.contains("**$name** Constructor argument description."),
+        "{hover}"
+    );
+    assert!(
+        hover.contains("public function __construct(int $name)"),
+        "{hover}"
+    );
+    assert!(!hover.contains("Own property description."), "{hover}");
+
+    let help = backend
+        .signature_help(SignatureHelpParams {
+            text_document_position_params: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: position_after(content, "new Promoted("),
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            context: None,
+        })
+        .await
+        .unwrap()
+        .expect("expected constructor signature help");
+    let parameters = help.signatures[0].parameters.as_ref().unwrap();
+    assert_eq!(
+        parameters[0].documentation,
+        Some(Documentation::MarkupContent(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: "Constructor argument description.".to_string(),
+        }))
+    );
+}
+
+#[test]
+fn hover_non_promoted_constructor_parameter_does_not_become_property() {
+    let backend = create_test_backend();
+    let content = r#"<?php
+class NotPromoted {
+    /** @param int $name Constructor argument description. */
+    public function __construct(
+        /** Own description. */
+        int $name,
+    ) {}
+}
+$p = new NotPromoted(1);
+echo $p->name;
+"#;
+    let position = position_after(content, "$p->na");
+    assert!(
+        hover_at(
+            &backend,
+            "file:///test.php",
+            content,
+            position.line,
+            position.character
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn hover_ordinary_property_description_precedence() {
+    for (docblock, description) in [
+        ("/** Ordinary summary. */", "Ordinary summary."),
+        (
+            "/** @var int Ordinary var description. */",
+            "Ordinary var description.",
+        ),
+        (
+            "/**\n * Ordinary summary.\n * @var int Ordinary var description.\n */",
+            "Ordinary summary.",
+        ),
+    ] {
+        let backend = create_test_backend();
+        let content = format!(
+            "<?php\nclass Ordinary {{\n    {docblock}\n    public int $name = 1;\n}}\n$p = new Ordinary();\necho $p->name;\n"
+        );
+        let position = position_after(&content, "$p->na");
+        let hover = hover_at(
+            &backend,
+            "file:///test.php",
+            &content,
+            position.line,
+            position.character,
+        )
+        .expect("expected ordinary property hover");
+        assert_eq!(
+            hover_text(&hover),
+            format!(
+                "{description}\n\n```php\n<?php\nclass Ordinary {{\n    public int $name;\n}}\n```"
+            ),
+        );
+    }
 }
 
 #[test]

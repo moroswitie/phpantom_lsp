@@ -194,6 +194,9 @@ pub(super) fn extract_method<'a>(
 /// winner.  A parameter's inline `@var` without a `@param` of its own also
 /// types the parameter in `signature`, and binds the class templates it
 /// names.
+///
+/// The description comes from the parameter's own docblock first, then the
+/// constructor's `@param` text; the two are never merged.
 fn push_promoted_properties<'a>(
     method: &'a Method<'a>,
     doc_ctx: Option<&DocblockCtx<'a>>,
@@ -218,10 +221,22 @@ fn push_promoted_properties<'a>(
         //    (e.g. `/** @var array<User> */ public array $users`).
         // 2. `@param` on the constructor docblock
         //    (e.g. `@param list<User> $users`).
-        let inline_var_type = doc_ctx.and_then(|ctx| {
+        let inline_docblock_info = doc_ctx.and_then(|ctx| {
             let doc = docblock::get_docblock_text_for_node(ctx.trivias, ctx.content, param)?;
-            docblock::extract_var_type(doc)
+            docblock::parse_docblock_for_tags(doc)
         });
+        let inline_var_type = inline_docblock_info
+            .as_ref()
+            .and_then(docblock::extract_var_type_from_info);
+        let description = inline_docblock_info
+            .as_ref()
+            .and_then(crate::hover::extract_property_description_from_info)
+            .or_else(|| {
+                signature
+                    .docblock
+                    .as_ref()
+                    .and_then(|info| docblock::extract_param_description_from_info(info, &raw_name))
+            });
 
         let type_hint = if let Some(ref var_type) = inline_var_type {
             let effective =
@@ -275,7 +290,7 @@ fn push_promoted_properties<'a>(
             name_offset: param.variable.span.start.offset,
             native_type_hint: saved_native_hint,
             type_hint,
-            description: None,
+            description,
             is_static: false,
             is_readonly: prop_readonly,
             doc_readonly: DocReadonly::No,
