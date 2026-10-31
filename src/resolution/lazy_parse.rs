@@ -126,8 +126,33 @@ impl Backend {
         // A stub path is as likely as the embedded stubs to be
         // phpstorm-stubs, whose declarations are filtered by PHP version.
         let php_version = self.is_external_stub_uri(&uri).then(|| self.php_version());
-        let content = crate::util::read_php_source(file_path);
-        content.and_then(|c| self.parse_and_cache_content_versioned(&c, &uri, php_version))
+        // An open file's indexes describe its buffer, which may differ from
+        // the disk copy (unsaved edits, line endings).  Checked again before
+        // anything is published, since the file can be opened meanwhile.
+        if self.open_files.read().contains_key(&uri) {
+            return self.open_file_classes(&uri, php_version);
+        }
+        let content = crate::util::read_php_source(file_path)?;
+        self.parse_and_cache_content_versioned(&content, &uri, php_version)
+    }
+
+    /// The classes an open file declares: the ones the index holds for it,
+    /// or, when it holds none, the buffer's text parsed now.
+    ///
+    /// Before the buffer's first publish the index can still hold the disk
+    /// copy's classes, from before the file was opened; the buffer's
+    /// publish replaces them, and retires what lookups concluded from them
+    /// (see `apply_ast_index_updates_batch`).  Nothing is published from
+    /// here: one from here could land after the publish of a newer edit.
+    fn open_file_classes(
+        &self,
+        uri: &str,
+        php_version: Option<PhpVersion>,
+    ) -> Option<Vec<Arc<ClassInfo>>> {
+        self.shared_classes_for_uri(uri).or_else(|| {
+            let buffer = self.open_files.read().get(uri).cloned()?;
+            Some(self.parse_php_classes_versioned(&buffer, uri, php_version))
+        })
     }
 
     /// Parse an embedded stub under its `phpantom-stub://` URI, sharing
@@ -202,6 +227,10 @@ impl Backend {
     /// parsing phpstorm-stubs so that only the correct variant of each
     /// function, method, or parameter is presented.
     ///
+    /// `content` is the file's saved text, so for a URI open in the editor
+    /// it is not published, and the buffer's classes are returned instead
+    /// (see [`PublicationOrder`](crate::parser::PublicationOrder)).
+    ///
     /// # Consistency model
     ///
     /// The five maps (`uri_classes_index`, `use_map`, `namespace_map`, `fqn_index`,
@@ -226,6 +255,27 @@ impl Backend {
         uri: &str,
         php_version: Option<PhpVersion>,
     ) -> Option<Vec<Arc<ClassInfo>>> {
+        let classes = self.parse_php_classes_versioned(content, uri, php_version);
+        // Not after a buffer still publishing: the caller can hold the lazy
+        // parse's claim on `uri`, which that buffer's write can wait on.
+        let Some(_publication) = self
+            .publication_order
+            .begin_disk(uri, &self.open_files, false)
+        else {
+            return self.open_file_classes(uri, php_version);
+        };
+        self.cache_parsed_classes(uri, classes)
+    }
+
+    /// The parsing half of
+    /// [`parse_and_cache_content_versioned`](Self::parse_and_cache_content_versioned):
+    /// the classes `content` declares, ready to be cached under `uri`.
+    fn parse_php_classes_versioned(
+        &self,
+        content: &str,
+        uri: &str,
+        php_version: Option<PhpVersion>,
+    ) -> Vec<Arc<ClassInfo>> {
         // The three helpers below each parse `content`; share one AST.
         let _parse_guard = crate::parser::with_parse_cache(content);
         let file_use_map = self.parse_use_statements(content);
@@ -305,8 +355,17 @@ impl Backend {
             }
         }
 
-        let arc_classes: Vec<Arc<ClassInfo>> = crate::types::into_arcs(classes);
+        crate::types::into_arcs(classes)
+    }
 
+    /// The caching half of
+    /// [`parse_and_cache_content_versioned`](Self::parse_and_cache_content_versioned):
+    /// publish `arc_classes` as the classes `uri` declares.
+    fn cache_parsed_classes(
+        &self,
+        uri: &str,
+        arc_classes: Vec<Arc<ClassInfo>>,
+    ) -> Option<Vec<Arc<ClassInfo>>> {
         // Used below to decide whether resolved-class cache eviction
         // is needed (only on re-parse, not first load).
         let was_already_parsed = self.parsed_uris.read().contains(uri);
@@ -503,5 +562,205 @@ impl Backend {
         }
 
         Some(arc_classes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use crate::Backend;
+    use crate::backend::file_access::FileText;
+
+    const URI: &str = "file:///order.php";
+    const BUFFER: &str = "<?php\nnamespace App;\nclass Invoice {}\n";
+    const DISK: &str = "<?php\nnamespace App;\n// saved\nclass Order {}\n";
+
+    fn class_names(backend: &Backend) -> Vec<String> {
+        backend
+            .get_classes_for_uri(URI)
+            .unwrap_or_default()
+            .iter()
+            .map(|c| c.name.to_string())
+            .collect()
+    }
+
+    fn open_buffer(backend: &Backend) {
+        backend
+            .open_files
+            .write()
+            .insert(URI.to_owned(), Arc::new(BUFFER.to_owned()));
+        backend.update_ast(URI, BUFFER);
+    }
+
+    /// Constructed: registers the disk publication directly and publishes
+    /// with [`Backend::cache_parsed_classes`], to build the interleaving
+    /// where a disk parse found the file closed and was still publishing
+    /// when the editor opened it.  The buffer's publish waits for it and
+    /// lands last.
+    #[test]
+    fn disk_publication_in_flight_lands_before_the_open_buffer() {
+        let backend = Backend::new_test();
+        let disk = backend.parse_php_classes_versioned(DISK, URI, None);
+        let publication = backend
+            .publication_order
+            .begin_disk(URI, &backend.open_files, true)
+            .unwrap();
+
+        std::thread::scope(|s| {
+            let opener = s.spawn(|| open_buffer(&backend));
+            // Publish once the opener waits; without that wait it never
+            // does, and this fails instead of passing.
+            backend.publication_order.block_until_waited_on();
+            backend.cache_parsed_classes(URI, disk);
+            drop(publication);
+            opener.join().unwrap();
+        });
+
+        assert_eq!(class_names(&backend), ["Invoice"]);
+        assert!(
+            backend
+                .find_class_in_uri_classes_index("App\\Order")
+                .is_none()
+        );
+        assert!(
+            backend
+                .find_class_in_uri_classes_index("App\\Invoice")
+                .is_some()
+        );
+    }
+
+    /// Disk text parsed for a class lookup is not published once the file
+    /// is open, however long its parse took.
+    #[test]
+    fn disk_classes_are_not_published_over_an_open_buffer() {
+        let backend = Backend::new_test();
+        open_buffer(&backend);
+
+        let classes = backend.parse_and_cache_content(DISK, URI).unwrap();
+        assert_eq!(classes[0].name, "Invoice");
+        assert_eq!(class_names(&backend), ["Invoice"]);
+    }
+
+    /// Disk text parsed for a function or constant lookup is not published
+    /// once the file is open, even though `update_ast` would otherwise
+    /// take any text for an open file as its buffer.
+    #[test]
+    fn disk_text_is_not_published_over_an_open_buffer() {
+        let backend = Backend::new_test();
+        open_buffer(&backend);
+
+        backend.update_ast_from_disk(URI, DISK);
+        assert_eq!(class_names(&backend), ["Invoice"]);
+    }
+
+    /// Text a caller read before the file was opened is not published as
+    /// its buffer: a request's first parse, call hierarchy and the Blade
+    /// refreshes take whatever `file_text` returned, which is the disk copy
+    /// while the file is closed.
+    #[test]
+    fn text_read_before_the_open_is_not_published_as_the_buffer() {
+        let backend = Backend::new_test();
+        open_buffer(&backend);
+
+        backend.update_ast_fetched(URI, &FileText::Disk(Arc::new(DISK.to_owned())));
+        assert_eq!(class_names(&backend), ["Invoice"]);
+    }
+
+    /// The reverse: a buffer a caller read before the file was closed is
+    /// not published as the file on disk, which the close re-read.
+    #[test]
+    fn buffer_read_before_the_close_is_not_published_as_the_disk_copy() {
+        let backend = Backend::new_test();
+        open_buffer(&backend);
+        let read = backend.file_text(URI).unwrap();
+        assert!(matches!(read, FileText::Buffer(_)));
+
+        backend.open_files.write().remove(URI);
+        backend.update_ast_from_disk(URI, DISK);
+        backend.update_ast_fetched(URI, &read);
+        assert_eq!(class_names(&backend), ["Order"]);
+    }
+
+    /// An edit whose publish starts after the file was closed and reopened
+    /// does not replace the reopened buffer, which published first.
+    #[test]
+    fn edit_from_before_a_reopen_does_not_replace_the_reopened_buffer() {
+        const EDIT: &str = "<?php\nnamespace App;\nclass Discarded {}\n";
+
+        let backend = Backend::new_test();
+        let edit = Arc::new(EDIT.to_owned());
+        backend
+            .open_files
+            .write()
+            .insert(URI.to_owned(), Arc::clone(&edit));
+        backend.open_files.write().remove(URI);
+        open_buffer(&backend);
+
+        backend.update_ast_buffer(URI, &edit);
+        assert_eq!(class_names(&backend), ["Invoice"]);
+    }
+
+    /// Constructed like the test above: a buffer is still publishing when
+    /// the file is closed.  The re-read from disk waits for it and lands
+    /// last, rather than the buffer's late writes leaving the closed file
+    /// indexed as the discarded edit.
+    #[test]
+    fn reread_after_a_close_lands_after_the_buffer_publishing_at_the_close() {
+        let backend = Backend::new_test();
+        open_buffer(&backend);
+        let buffer = backend.parse_php_classes_versioned(BUFFER, URI, None);
+        let publication = backend
+            .publication_order
+            .begin_buffer(URI, None, &backend.open_files)
+            .unwrap();
+        backend.open_files.write().remove(URI);
+
+        std::thread::scope(|s| {
+            let reread = s.spawn(|| backend.update_ast_from_disk(URI, DISK));
+            backend.publication_order.block_until_waited_on();
+            backend.cache_parsed_classes(URI, buffer);
+            drop(publication);
+            reread.join().unwrap();
+        });
+
+        assert_eq!(class_names(&backend), ["Order"]);
+    }
+
+    /// A lookup between `didOpen` recording the buffer and publishing it
+    /// finds the buffer's class, rather than missing it and caching a
+    /// miss that could outlive the buffer's publish.
+    #[test]
+    fn class_lookup_before_the_open_buffer_publishes_finds_the_buffers_class() {
+        const DISK: &str = "<?php\nnamespace App;\nclass Order {}\n";
+        const BUFFER: &str =
+            "<?php\nnamespace App;\nclass Order { public function unsaved() {} }\n";
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Order.php");
+        std::fs::write(&path, DISK).unwrap();
+        let uri = crate::util::path_to_uri(&path);
+        let backend = Backend::new_test();
+        backend
+            .symbols
+            .fqn_uri_index
+            .write()
+            .insert("App\\Order", uri.clone());
+        backend
+            .open_files
+            .write()
+            .insert(uri, Arc::new(BUFFER.to_owned()));
+
+        let order = backend
+            .find_or_load_class("App\\Order")
+            .expect("the buffer's class must resolve");
+        assert!(order.methods.iter().any(|m| m.name == "unsaved"));
+        assert!(
+            !backend
+                .symbols
+                .class_not_found_cache
+                .read()
+                .contains("App\\Order")
+        );
     }
 }

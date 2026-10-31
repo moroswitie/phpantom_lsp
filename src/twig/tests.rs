@@ -57,6 +57,38 @@ fn nothing_is_read_in_a_project_without_twig() {
     assert!(backend.twig_roots().is_empty());
 }
 
+/// A file the disk copy stops making a template is indexed from its open
+/// buffer, not from the disk copy the file watcher read.
+#[test]
+fn an_open_file_that_stops_being_a_template_is_indexed_from_its_buffer() {
+    const BUFFER: &str = "{% include 'menu.html' %}\n<?php class BufferOnly {}\n";
+    const DISK: &str = "<?php class DiskOnly {}\n";
+
+    let (backend, dir) = workspace(&[
+        ("theme/index.html", "{% include 'menu.html' %}\n"),
+        ("theme/menu.html", "<nav></nav>\n"),
+    ]);
+    backend.ensure_workspace_indexed();
+    let uri = crate::util::path_to_uri(&dir.path().join("theme/index.html"));
+    backend
+        .open_files
+        .write()
+        .insert(uri.clone(), std::sync::Arc::new(BUFFER.to_owned()));
+    backend.update_resource_symbol_index(&uri, BUFFER);
+    assert!(backend.is_resource_uri(&uri));
+
+    // Without `index.html` naming `menu.html`, `theme/` is no root.
+    backend.update_resource_symbol_index(&uri, DISK);
+    assert!(!backend.is_resource_uri(&uri));
+    let classes: Vec<String> = backend
+        .get_classes_for_uri(&uri)
+        .unwrap_or_default()
+        .iter()
+        .map(|class| class.name.to_string())
+        .collect();
+    assert_eq!(classes, ["BufferOnly"]);
+}
+
 #[test]
 fn a_root_goes_with_the_files_that_made_it() {
     let (backend, dir) = workspace(THEMES);

@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::Backend;
+use crate::backend::file_access::FileText;
 use crate::symbol_map::{StringKeyKind, SymbolKind};
 use crate::virtual_members::laravel::canonical_view_name;
 
@@ -52,7 +53,7 @@ impl Backend {
             crate::type_engine::call_resolution::activate_body_infer_memo,
             |index| {
                 let uri = &order[index];
-                let Some(content) = self.get_file_content(uri) else {
+                let Some(content) = self.file_text(uri) else {
                     return;
                 };
                 self.reinfer_and_reparse_blade_with(
@@ -189,7 +190,7 @@ impl Backend {
     /// Re-infer one template on its own, taking its own caller snapshot.
     /// For the single-template triggers (opening a Blade file, saving a
     /// controller) rather than a bulk refresh pass.
-    pub(crate) fn reinfer_and_reparse_blade(&self, uri: &str, content: &str) -> bool {
+    pub(crate) fn reinfer_and_reparse_blade(&self, uri: &str, content: &FileText) -> bool {
         self.reinfer_and_reparse_blade_with(uri, content, None, None)
     }
 
@@ -200,7 +201,7 @@ impl Backend {
     /// preprocessed before the page that `@include`s it was ever parsed read
     /// its own scope off a page that did not exist yet, and opening the page
     /// is the point that answer becomes available.
-    pub(crate) fn reinfer_blade_and_its_renders(&self, uri: &str, content: &str) {
+    pub(crate) fn reinfer_blade_and_its_renders(&self, uri: &str, content: &FileText) {
         if self.reinfer_and_reparse_blade(uri, content) {
             self.schedule_diagnostics(uri.to_string());
         }
@@ -208,14 +209,18 @@ impl Backend {
     }
 
     /// Recompute one template's inferred variable set; when it differs
-    /// from the cached set, overwrite the cache and re-parse the
-    /// template (`update_ast` reads the cache, so it must be written
-    /// first).  A missing cache entry counts as empty, matching what
-    /// `update_ast` injects on a cache miss.
+    /// from the cached set, re-parse the template with it, which records
+    /// it in the cache (see [`Backend::update_blade_with_scope`]).  A
+    /// missing cache entry counts as empty, matching what `update_ast`
+    /// injects on a cache miss.
+    ///
+    /// `true` when the template was re-parsed.  `false` also when `content`
+    /// is no longer the template's text; its cached scope is then left as
+    /// it was.
     fn reinfer_and_reparse_blade_with(
         &self,
         uri: &str,
-        content: &str,
+        content: &FileText,
         shared: Option<&ViewCallerSnapshot>,
         shared_blade: Option<&BladeCallerSnapshot>,
     ) -> bool {
@@ -227,12 +232,7 @@ impl Backend {
         if unchanged {
             return false;
         }
-        self.blade
-            .injected_vars
-            .write()
-            .insert(uri.to_string(), fresh);
-        self.update_ast(uri, content);
-        true
+        self.update_blade_with_scope(uri, content, fresh)
     }
 
     /// Re-run call-site inference for the templates referenced by one
@@ -283,7 +283,7 @@ impl Backend {
                 if self.blade_virtual_php_arc(&template_uri).is_none() {
                     continue;
                 }
-                let Some(content) = self.get_file_content(&template_uri) else {
+                let Some(content) = self.file_text(&template_uri) else {
                     continue;
                 };
                 if self.reinfer_and_reparse_blade(&template_uri, &content) {
@@ -329,7 +329,7 @@ impl Backend {
                     if self.blade_virtual_php_arc(&template_uri).is_none() {
                         continue;
                     }
-                    let Some(template_content) = self.get_file_content(&template_uri) else {
+                    let Some(template_content) = self.file_text(&template_uri) else {
                         continue;
                     };
                     if self.reinfer_and_reparse_blade(&template_uri, &template_content) {
@@ -375,8 +375,13 @@ impl Backend {
                 .partition(|(_, _, extends)| extends.iter().any(|name| frontier.contains(name)));
             pending = rest;
             frontier.clear();
-            for (uri, content, _) in children {
+            for (uri, _, _) in children {
                 frontier.extend(self.view_names_for_blade_uri(&uri));
+                // Read again rather than taken from the snapshot, which
+                // does not say whether it holds the buffer or the disk copy.
+                let Some(content) = self.file_text(&uri) else {
+                    continue;
+                };
                 if self.reinfer_and_reparse_blade(&uri, &content) {
                     self.schedule_diagnostics(uri);
                 }

@@ -200,6 +200,7 @@ mod framework_resources;
 mod hover;
 mod implementation;
 mod indexing_include;
+mod indexing_open_files;
 mod indexing_phar;
 mod indexing_workspace_folders;
 mod inlay_hints;

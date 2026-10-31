@@ -7,6 +7,17 @@ use crate::class_lookup::Fqn;
 
 impl Backend {
     pub(crate) fn build_provider_resources(&self, providers: &super::LaravelProviders) {
+        if self.rebuild_provider_resources(providers) {
+            self.reparse_blade_templates();
+        }
+    }
+
+    /// [`build_provider_resources`](Self::build_provider_resources), except
+    /// that the templates are left for the caller to preprocess again,
+    /// which is what the return value asks for (see
+    /// [`publish_provider_resources`](Self::publish_provider_resources)).
+    #[must_use]
+    fn rebuild_provider_resources(&self, providers: &super::LaravelProviders) -> bool {
         let mut scans = crate::virtual_members::laravel::ProviderScans::default();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
@@ -39,7 +50,7 @@ impl Backend {
         let trans_count = resources.trans_dirs.len();
         let route_count = resources.route_files.len();
         let binding_count = resources.bindings.len();
-        self.publish_provider_resources(resources);
+        let reparse_templates = self.publish_provider_resources(resources);
 
         tracing::info!(
             "PHPantom: discovered {} package config files, {} view dirs, {} translation dirs, {} route files, {} container bindings from service providers",
@@ -49,6 +60,7 @@ impl Backend {
             route_count,
             binding_count,
         );
+        reparse_templates
     }
 
     /// Scan one provider file for the resources it registers, returning them
@@ -106,15 +118,25 @@ impl Backend {
             }
             scans.merged()
         };
-        self.publish_provider_resources(merged);
+        if self.publish_provider_resources(merged) {
+            self.reparse_blade_templates();
+        }
     }
 
     /// Publish a freshly merged provider-resource table, dropping the caches
     /// that were derived from the previous one.
+    ///
+    /// Returns whether the Blade directive set changed, so that every
+    /// template has to be preprocessed again
+    /// ([`reparse_blade_templates`](Self::reparse_blade_templates)).  That
+    /// is left to the caller: it publishes the templates, which a caller
+    /// still publishing a file from disk must not do yet (see
+    /// [`PublicationOrder`](crate::parser::PublicationOrder)).
+    #[must_use]
     fn publish_provider_resources(
         &self,
         resources: crate::virtual_members::laravel::ProviderResources,
-    ) {
+    ) -> bool {
         let has_string_key_sources = resources.config_files.len()
             + resources.view_dirs.len()
             + resources.trans_dirs.len()
@@ -178,8 +200,8 @@ impl Backend {
         let directives_changed = *self.blade.directives.read() != directives;
         if directives_changed {
             *self.blade.directives.write() = directives;
-            self.reparse_blade_templates();
         }
+        directives_changed
     }
 
     /// The lowercased names of every method the installed
@@ -207,11 +229,11 @@ impl Backend {
     /// A no-op before any template has been preprocessed, and only reached
     /// when the registered directive set actually moved, so the pass cannot
     /// repeat itself: the second scan publishes the same set.
-    fn reparse_blade_templates(&self) {
+    pub(crate) fn reparse_blade_templates(&self) {
         let uris = self.lowered_template_uris();
         for uri in uris {
-            if let Some(content) = self.get_file_content(&uri) {
-                self.update_ast(&uri, &content);
+            if let Some(content) = self.file_text(&uri) {
+                self.update_ast_fetched(&uri, &content);
             }
         }
     }
@@ -228,25 +250,28 @@ impl Backend {
     /// them the container would let win, and only the merge knows that.  A
     /// cheap no-op for every file that is not a registered provider, and until
     /// the full scan has run.
+    ///
+    /// Returns whether the caller has to preprocess every template again
+    /// (see [`publish_provider_resources`](Self::publish_provider_resources)).
+    #[must_use]
     pub(crate) fn refresh_laravel_provider_resources(
         &self,
         uri: &str,
         content: &str,
         providers: &super::ProvidersOnce<'_>,
-    ) {
+    ) -> bool {
         if !self.resolved_class_cache.read().laravel().is_enabled() {
-            return;
+            return false;
         }
         if !self.laravel.provider_scans.read().is_built() {
-            return;
+            return false;
         }
 
         // The app's provider list decides which providers are registered and
         // in what order, both of which the merge depends on, so a change to it
         // rebuilds from scratch.
         if self.is_laravel_provider_list_uri(uri) {
-            self.build_provider_resources(providers.get());
-            return;
+            return self.rebuild_provider_resources(providers.get());
         }
 
         let known = {
@@ -259,16 +284,14 @@ impl Backend {
             // A registered provider whose class could not be resolved when the
             // full scan ran, because the file is written after the list that
             // names it.  It joins the table the moment it parses.
-            if self.declares_registered_provider(uri) {
-                self.build_provider_resources(providers.get());
-            }
-            return;
+            return self.declares_registered_provider(uri)
+                && self.rebuild_provider_resources(providers.get());
         };
 
         let Some((identity, resources)) =
             self.scan_provider_resources(uri, Some(content), &fqn, origin)
         else {
-            return;
+            return false;
         };
 
         let merged = {
@@ -280,14 +303,14 @@ impl Backend {
                 .scan_for(uri)
                 .is_some_and(|scan| scan.resources == resources && scan.identity == identity)
             {
-                return;
+                return false;
             }
             if !scans.replace(uri, identity, resources) {
-                return;
+                return false;
             }
             scans.merged()
         };
-        self.publish_provider_resources(merged);
+        self.publish_provider_resources(merged)
     }
 
     /// Whether the file at `uri` declares a registered service provider that a

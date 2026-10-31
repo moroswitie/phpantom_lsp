@@ -120,6 +120,9 @@ pub(crate) struct SymbolIndex {
     /// lookup records a miss only if it is unchanged since the lookup
     /// began.
     function_index_generation: Arc<AtomicU64>,
+    /// The same for `class_not_found_cache`, bumped each time it is
+    /// cleared.
+    class_miss_generation: Arc<AtomicU64>,
 }
 
 impl SymbolIndex {
@@ -129,6 +132,7 @@ impl SymbolIndex {
             id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
             class_lookup_generation: Arc::new(AtomicU64::new(0)),
             function_index_generation: Arc::new(AtomicU64::new(0)),
+            class_miss_generation: Arc::new(AtomicU64::new(0)),
             uri_classes_index: Arc::new(RwLock::new(HashMap::new())),
             global_functions: Arc::new(RwLock::new(CiMap::new())),
             duplicate_functions: Arc::new(RwLock::new(CiMap::new())),
@@ -184,6 +188,18 @@ impl SymbolIndex {
         let mut nf_cache = self.function_not_found_cache.write();
         self.function_index_generation
             .fetch_add(1, Ordering::Release);
+        nf_cache.clear();
+    }
+
+    pub(crate) fn class_miss_generation(&self) -> u64 {
+        self.class_miss_generation.load(Ordering::Acquire)
+    }
+
+    /// Clear the class negative cache, invalidating misses recorded by
+    /// lookups that began earlier.
+    pub(crate) fn retire_class_misses(&self) {
+        let mut nf_cache = self.class_not_found_cache.write();
+        self.class_miss_generation.fetch_add(1, Ordering::Release);
         nf_cache.clear();
     }
 

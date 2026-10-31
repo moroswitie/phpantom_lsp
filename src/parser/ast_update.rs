@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use crate::ParseErrorEntry;
 use crate::atom::atom;
+use crate::backend::file_access::FileText;
 use crate::blade::call_site_inference::BladeScope;
 use crate::names::OwnedResolvedNames;
 use crate::symbol_map::{SymbolMap, extract_symbol_map_for_index};
@@ -94,6 +95,28 @@ pub(crate) struct BladeLowering {
     scope: BladeScope,
 }
 
+/// Where the text an update publishes came from.
+#[derive(Clone, Copy)]
+enum Source<'a> {
+    /// The caller's word: the buffer if the file is open, the file on disk
+    /// if not ([`Backend::update_ast`]).
+    Caller,
+    /// This buffer of the file ([`Backend::update_ast_buffer`]).
+    Buffer(&'a Arc<String>),
+    /// The file on disk ([`Backend::update_ast_from_disk`]).
+    Disk,
+}
+
+impl<'a> Source<'a> {
+    /// Where `text` came from, as [`Backend::file_text`] read it.
+    fn fetched(text: &'a FileText) -> Self {
+        match text {
+            FileText::Buffer(buffer) => Source::Buffer(buffer),
+            FileText::Disk(_) => Source::Disk,
+        }
+    }
+}
+
 impl Backend {
     /// Update the uri_classes_index, use_map, and namespace_map for a given file URI
     /// by parsing its content.
@@ -101,7 +124,99 @@ impl Backend {
     /// Returns `true` when at least one class signature in this file
     /// changed (or a class was added/removed), meaning other open files
     /// that reference those classes may have stale diagnostics.
+    ///
+    /// `content` is taken to be the buffer if `uri` is open, and the file
+    /// on disk if not.  A caller that cannot say which uses
+    /// [`update_ast_fetched`](Self::update_ast_fetched) or
+    /// [`update_ast_from_disk`](Self::update_ast_from_disk), and the
+    /// editor's notifications use
+    /// [`update_ast_buffer`](Self::update_ast_buffer).
     pub fn update_ast(&self, uri: &str, content: &str) -> bool {
+        self.update_ast_from(uri, content, Source::Caller, None)
+            .unwrap_or(false)
+    }
+
+    /// [`update_ast`](Self::update_ast) for `buffer` as the editor's
+    /// notification recorded it in `open_files`, which is published only
+    /// while it is still the file's buffer.
+    ///
+    /// Between recording the buffer and publishing it, a newer edit, or a
+    /// close and reopen, can replace it and publish first; this one then
+    /// steps aside rather than landing last.
+    pub(crate) fn update_ast_buffer(&self, uri: &str, buffer: &Arc<String>) -> bool {
+        self.update_ast_from(uri, buffer, Source::Buffer(buffer), None)
+            .unwrap_or(false)
+    }
+
+    /// [`update_ast`](Self::update_ast) for `content` read from `uri`'s file
+    /// on disk, which is published only while the file is closed: an open
+    /// file's indexes describe its buffer.
+    ///
+    /// Every caller that reads a file from disk to publish it uses this:
+    /// the file may be open in the editor by then.
+    pub(crate) fn update_ast_from_disk(&self, uri: &str, content: &str) {
+        self.update_ast_from(uri, content, Source::Disk, None);
+    }
+
+    /// [`update_ast`](Self::update_ast) for `text` as
+    /// [`file_text`](Self::file_text) read it: a buffer is published only
+    /// while it is still the file's buffer, and the disk copy only while
+    /// the file is closed.  The file may have been opened, edited or closed
+    /// since it was read.
+    pub(crate) fn update_ast_fetched(&self, uri: &str, text: &FileText) -> bool {
+        self.update_ast_from(uri, text, Source::fetched(text), None)
+            .unwrap_or(false)
+    }
+
+    /// [`update_ast_fetched`](Self::update_ast_fetched) for a template with
+    /// the call-site `scope` inferred from `text`.  The template's lowering
+    /// reads its scope from `blade.injected_vars`, so the scope is recorded
+    /// there by this publication, and only if `text` is published: a scope
+    /// inferred from a buffer since replaced would otherwise be lowered
+    /// into the next edit.
+    ///
+    /// `false` when nothing was published.
+    pub(crate) fn update_blade_with_scope(
+        &self,
+        uri: &str,
+        text: &FileText,
+        scope: BladeScope,
+    ) -> bool {
+        self.update_ast_from(uri, text, Source::fetched(text), Some(scope))
+            .is_some()
+    }
+
+    /// Parse `content` as `uri` and publish it, with the template scope
+    /// `scope` when one was inferred for it.
+    ///
+    /// `None` when nothing was published: disk text for an open file, or a
+    /// buffer whose file is closed or holds another buffer by now.
+    fn update_ast_from(
+        &self,
+        uri: &str,
+        content: &str,
+        source: Source<'_>,
+        scope: Option<BladeScope>,
+    ) -> Option<bool> {
+        // Every write below is part of this publication, from the Blade
+        // refreshes before the parse to the Laravel ones after it, so the
+        // turn is taken before the first (see `PublicationOrder`).
+        let order = &self.publication_order;
+        let publication = match source {
+            Source::Buffer(buffer) => order.begin_buffer(uri, Some(buffer), &self.open_files)?,
+            Source::Caller if self.open_files.read().contains_key(uri) => {
+                order.begin_buffer(uri, None, &self.open_files)?
+            }
+            Source::Caller | Source::Disk => order.begin_disk(uri, &self.open_files, true)?,
+        };
+        let is_buffer = publication.is_buffer();
+        if let Some(scope) = scope {
+            self.blade
+                .injected_vars
+                .write()
+                .insert(uri.to_owned(), scope);
+        }
+
         let blade = self.lower_blade_template(uri, content);
         let content_to_parse = blade.as_ref().map_or_else(
             || Arc::new(content.to_string()),
@@ -128,7 +243,7 @@ impl Backend {
         let uri_owned = uri.to_string();
 
         let result = crate::util::catch_panic_unwind_safe("parse", uri, None, || {
-            self.update_ast_inner(&uri_owned, content_owned, blade)
+            self.update_ast_inner(&uri_owned, content_owned, blade, is_buffer)
         });
 
         // The refreshes below that rebuild from the registered provider list
@@ -164,20 +279,26 @@ impl Backend {
         // translation directories, route files, and component namespaces
         // coherent with edits to the providers that register them.  Cheap
         // no-op for every file that is not a registered service provider.
-        self.refresh_laravel_provider_resources(uri, content, &providers);
+        let reparse_templates = self.refresh_laravel_provider_resources(uri, content, &providers);
 
-        match result {
-            Some(changed) => changed,
-            None => {
-                // Parser panicked — store a single "Parse failed" error
-                // so the syntax-error diagnostic collector can report it.
-                self.publish_parse_failure(
-                    uri,
-                    vec![("Parse failed (internal error)".to_string(), 0, 0)],
-                );
-                false
-            }
+        let changed = result.unwrap_or_else(|| {
+            // Parser panicked — store a single "Parse failed" error
+            // so the syntax-error diagnostic collector can report it.
+            self.publish_parse_failure(
+                uri,
+                vec![("Parse failed (internal error)".to_string(), 0, 0)],
+            );
+            false
+        });
+
+        // Re-preprocessing the templates publishes each of them, which
+        // waits its turn, and a thread waits only while it holds no
+        // publication of its own.
+        drop(publication);
+        if reparse_templates {
+            self.reparse_blade_templates();
         }
+        Some(changed)
     }
 
     /// Inner implementation of [`update_ast`] that performs the actual parse
@@ -190,8 +311,9 @@ impl Backend {
         uri: &str,
         content: Arc<String>,
         blade: Option<BladeLowering>,
+        is_buffer: bool,
     ) -> bool {
-        let (mut update, parsed) = if self.open_files.read().contains_key(uri) {
+        let (mut update, parsed) = if is_buffer {
             let mut parse_errors = Vec::new();
             let parsed = super::ParsedFile::new(content, |arena, text| {
                 let (errors, program) = parse_with_errors(arena, text);
