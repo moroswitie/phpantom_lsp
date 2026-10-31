@@ -113,8 +113,8 @@ pub(crate) fn collect_column_names(class: &ClassInfo) -> Vec<String> {
     // are added by PHPDocProvider during full resolution, which runs
     // after this function), so read them from the tags parsed when the
     // class was extracted.
-    for (name, _type) in class.doc_properties() {
-        push(name);
+    for property in class.doc_properties() {
+        push(&property.name);
     }
 
     columns

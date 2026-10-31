@@ -84,3 +84,19 @@ class HoverRealPropertyDemo
         return $this->items;
     }
 }
+
+// ── Hover: Magic Member Descriptions ────────────────────────────────────────
+
+class HoverMagicMemberDescriptionsDemo
+{
+    public function demo(Scaffolding\Zoo $zoo): string
+    {
+        // Try: hover on `gorilla` → "The gorilla's display label."
+        $label = $zoo->gorilla;
+
+        // Try: hover on `hyena` → "Checks whether the hyena accepts a call."
+        $zoo->hyena('x');
+
+        return $label;
+    }
+}

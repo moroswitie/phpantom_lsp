@@ -15,7 +15,7 @@ use super::parser::{DocblockInfo, parse_docblock_for_tags, vendor_rank};
 use super::tags::sanitise_and_parse_docblock_type;
 use super::type_strings::split_type_token;
 use crate::php_type::PhpType;
-use crate::types::{MethodExtras, MethodInfo, ParameterInfo, Visibility};
+use crate::types::{DocblockProperty, MethodExtras, MethodInfo, ParameterInfo, Visibility};
 
 // ─── @property Tags ─────────────────────────────────────────────────────────
 
@@ -30,9 +30,9 @@ use crate::types::{MethodExtras, MethodInfo, ParameterInfo, Visibility};
 ///   - `@property-read Type $name`
 ///   - `@property-write Type $name`
 ///
-/// Returns a list of `(property_name, cleaned_type)` pairs.  The property
+/// Returns each property's name, parsed type and description. The property
 /// name does **not** include the `$` prefix.
-pub fn extract_property_tags(docblock: &str) -> Vec<(Atom, Option<PhpType>)> {
+pub fn extract_property_tags(docblock: &str) -> Vec<DocblockProperty> {
     let Some(info) = parse_docblock_for_tags(docblock) else {
         return Vec::new();
     };
@@ -43,7 +43,7 @@ pub fn extract_property_tags(docblock: &str) -> Vec<(Atom, Option<PhpType>)> {
 ///
 /// Class-level docblocks are parsed once during extraction, so the class
 /// parser reuses that [`DocblockInfo`] instead of re-parsing the text.
-pub fn extract_property_tags_from_info(info: &DocblockInfo) -> Vec<(Atom, Option<PhpType>)> {
+pub fn extract_property_tags_from_info(info: &DocblockInfo) -> Vec<DocblockProperty> {
     const PROPERTY_KINDS: &[TagKind] = &[
         TagKind::Property,
         TagKind::PropertyRead,
@@ -65,7 +65,14 @@ pub fn extract_property_tags_from_info(info: &DocblockInfo) -> Vec<(Atom, Option
         let parsed = tag
             .type_text()
             .and_then(|type_text| sanitise_and_parse_docblock_type(&type_text));
-        results.push((atom(name), parsed));
+        results.push(DocblockProperty {
+            name: atom(name),
+            type_hint: parsed,
+            description: tag
+                .type_description()
+                .filter(|desc| !desc.trim().is_empty())
+                .map(|desc| desc.into_owned()),
+        });
     }
 
     results
@@ -129,12 +136,20 @@ pub fn extract_method_tags_from_info(info: &DocblockInfo) -> Vec<MethodInfo> {
         // The grammar models `@method Type name(…)` but not the
         // `@method name(…): Type` spelling, which leaves the `: Type` at
         // the head of the description.
-        let colon_return = method
+        let colon_signature = method
             .description
             .as_deref()
             .and_then(|desc| desc.trim_start().strip_prefix(':'))
-            .map(|after_colon| split_type_token(after_colon.trim_start()).0.trim())
+            .map(|after_colon| split_type_token(after_colon.trim_start()));
+        let colon_return = colon_signature
+            .map(|(type_token, _)| type_token.trim())
             .filter(|type_token| !type_token.is_empty());
+        let description = colon_signature
+            .map(|(_, description)| description)
+            .or(method.description.as_deref())
+            .map(str::trim)
+            .filter(|desc| !desc.is_empty())
+            .map(str::to_owned);
 
         // A lone `static` before the method name is ambiguous: the grammar
         // reads it as the return type, which is right for
@@ -199,7 +214,7 @@ pub fn extract_method_tags_from_info(info: &DocblockInfo) -> Vec<MethodInfo> {
             parameters: parameters.into(),
             return_type,
             native_return_type: None,
-            description: None,
+            description,
             is_static,
             visibility: Visibility::Public,
             has_scope_attribute: false,
