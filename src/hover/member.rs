@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tower_lsp_server::gen_lsp_types::{Contents, Hover};
 
 use crate::Backend;
-use crate::class_lookup::{Fqn, ResolvedClassLoader};
+use crate::class_lookup::{Fqn, ResolvedClassLoader, find_class_at_offset};
 use crate::php_type::PhpType;
 use crate::references::MemberRefKind;
 use crate::symbol_map::SubjectText;
@@ -516,6 +516,61 @@ impl Backend {
             Some(make_hover(hover_markdowns.into_iter().next().unwrap()))
         } else {
             Some(make_hover(hover_markdowns.join("\n\n---\n\n")))
+        }
+    }
+
+    /// Hover for a method, class constant or enum case at its
+    /// declaration site: the member declared there, enriched with its
+    /// inherited documentation, exactly as hovering a usage of the
+    /// member renders it.
+    ///
+    /// The containing class must itself declare a real member of that
+    /// name at this very position. A docblock tag (`@property`,
+    /// `@method`) declares no such member, so it answers nothing here,
+    /// even when a real member shares its name. The class must also be
+    /// the declaration its name resolves to, because the enrichment
+    /// loads it again by name.
+    pub(super) fn hover_member_declaration(
+        &self,
+        site: &HoverSite,
+        symbol_start: u32,
+        name: &str,
+        is_method: bool,
+    ) -> Option<Hover> {
+        let owner = find_class_at_offset(&site.ctx.classes, site.offset)?;
+        let resolved_class_loader = site.loaders.resolved_class_loader();
+        if !self.is_resolved_class_declaration(owner, site.uri, resolved_class_loader) {
+            return None;
+        }
+        let declared_here = if is_method {
+            owner
+                .get_method_ci(name)
+                .is_some_and(|method| !method.is_virtual && method.name_offset == symbol_start)
+        } else {
+            owner.get_constant(name).is_some_and(|constant| {
+                !constant.is_virtual && constant.name_offset == symbol_start
+            })
+        };
+        if !declared_here {
+            return None;
+        }
+        let merged = crate::virtual_members::resolve_class_fully_cached(
+            owner,
+            resolved_class_loader,
+            &self.resolved_class_cache,
+        );
+        if is_method {
+            let method = merged.get_method_ci(name)?;
+            Some(self.hover_for_method(
+                method,
+                &merged,
+                resolved_class_loader,
+                site.uri,
+                site.content,
+            ))
+        } else {
+            let constant = merged.get_constant(name)?;
+            Some(self.hover_for_constant(constant, &merged, resolved_class_loader))
         }
     }
 
