@@ -1321,6 +1321,7 @@ function runDemoAssertions(): void
 
     // ── DeclarationHoverDemo (hover.php) ─────────────────────────────────
     $declarationDemo = new DeclarationHoverDemo();
+    assert(sharedDeclarationHoverDemo() instanceof DeclarationHoverDemo, 'sharedDeclarationHoverDemo() must hold the DeclarationHoverDemo its static declaration shows');
     assert($declarationDemo->greeting() === 'hello', 'DeclarationHoverDemo::greeting() must return the string its declaration shows');
     assert(DeclarationHoverDemo::MAX_GREETINGS === 3, 'DeclarationHoverDemo::MAX_GREETINGS must be the int 3 its declaration shows');
     assert(DECLARATION_GREETING === 'hello', 'DECLARATION_GREETING must be the string its declaration shows');

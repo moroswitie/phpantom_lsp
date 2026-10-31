@@ -170,14 +170,14 @@ enum VariableDefinitionHover {
 ///
 /// Every `VarDefKind` is named, so a kind is never covered by accident
 /// through a catch-all. The caller passes the declaration-hover
-/// switch; no entry's answer depends on it.
+/// switch.
 ///
 /// The `Parameter` entry is not the whole policy for parameters: the
 /// caller also suppresses a promoted parameter, which declares a
 /// property rather than a local variable.
 fn variable_definition_hover(
     kind: &VarDefKind,
-    _hover_on_declarations: bool,
+    hover_on_declarations: bool,
 ) -> VariableDefinitionHover {
     match kind {
         VarDefKind::Assignment => VariableDefinitionHover::ShowVariable,
@@ -186,7 +186,9 @@ fn variable_definition_hover(
         VarDefKind::Property => VariableDefinitionHover::Suppress,
         VarDefKind::Foreach => VariableDefinitionHover::ShowVariable,
         VarDefKind::Catch => VariableDefinitionHover::ShowVariable,
+        VarDefKind::StaticDecl if hover_on_declarations => VariableDefinitionHover::ShowVariable,
         VarDefKind::StaticDecl => VariableDefinitionHover::Suppress,
+        VarDefKind::GlobalDecl if hover_on_declarations => VariableDefinitionHover::ShowVariable,
         VarDefKind::GlobalDecl => VariableDefinitionHover::Suppress,
         VarDefKind::ArrayDestructuring => VariableDefinitionHover::ShowVariable,
         VarDefKind::ListDestructuring => VariableDefinitionHover::ShowVariable,
@@ -309,6 +311,7 @@ mod tests {
     fn variable_definition_hover_names_every_kind_with_its_current_policy() {
         use VariableDefinitionHover::{ShowVariable, Suppress};
 
+        // The policy with the switch off, and how the switch changes it.
         let policies = [
             (VarDefKind::Assignment, ShowVariable),
             (VarDefKind::CompoundAssignment, ShowVariable),
@@ -325,14 +328,21 @@ mod tests {
             (VarDefKind::DocblockVar, Suppress),
             (VarDefKind::Unset, Suppress),
         ];
-        for hover_on_declarations in [false, true] {
-            for (kind, expected) in &policies {
-                assert_eq!(
-                    variable_definition_hover(kind, hover_on_declarations),
-                    *expected,
-                    "for {kind:?} with the switch {hover_on_declarations}"
-                );
-            }
+        let switched_on = |kind: &VarDefKind, off| match kind {
+            VarDefKind::StaticDecl | VarDefKind::GlobalDecl => ShowVariable,
+            _ => off,
+        };
+        for (kind, off) in &policies {
+            assert_eq!(
+                variable_definition_hover(kind, false),
+                *off,
+                "for {kind:?} with the switch off"
+            );
+            assert_eq!(
+                variable_definition_hover(kind, true),
+                switched_on(kind, *off),
+                "for {kind:?} with the switch on"
+            );
         }
     }
 }
