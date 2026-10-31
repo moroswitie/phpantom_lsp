@@ -1921,3 +1921,44 @@ fn method_tag_with_template_params() {
     assert_eq!(methods[0].template_bindings()[0].0.as_str(), "TVal");
     assert_eq!(methods[0].template_bindings()[0].1.as_str(), "$default");
 }
+
+// ─── @param description beside vendor tags ──────────────────────────
+
+#[test]
+fn param_description_survives_a_vendor_tag_without_text() {
+    for doc in [
+        "/**
+ * @param array $ids The ids.
+ * @phpstan-param list<int> $ids
+ */",
+        "/**
+ * @psalm-param list<int> $ids
+ * @param array $ids The ids.
+ */",
+        "/**
+ * @phpstan-param list<int> $ids
+ * @psalm-param list<int> $ids
+ * @param array $ids The ids.
+ */",
+    ] {
+        assert_eq!(
+            extract_param_description(doc, "$ids").as_deref(),
+            Some("The ids."),
+            "{doc}"
+        );
+    }
+    // A vendor tag with its own text still wins, and no tag with text means none.
+    let doc = "/**
+ * @param array $ids Plain.
+ * @phpstan-param list<int> $ids Vendor.
+ */";
+    assert_eq!(
+        extract_param_description(doc, "$ids").as_deref(),
+        Some("Vendor.")
+    );
+    let doc = "/**
+ * @param array $ids
+ * @phpstan-param list<int> $ids
+ */";
+    assert_eq!(extract_param_description(doc, "$ids"), None);
+}

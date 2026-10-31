@@ -1482,6 +1482,34 @@ async fn param_description_from_docblock() {
 }
 
 #[tokio::test]
+async fn param_description_survives_a_vendor_tag_without_text() {
+    let backend = create_test_backend();
+    let uri = Uri::parse("file:///sig_param_vendor_doc.php").unwrap();
+    let text = concat!(
+        "<?php
+",
+        "/**
+",
+        " * @param array $ids The IDs to process.
+",
+        " * @phpstan-param list<int> $ids
+",
+        " */
+",
+        "function process(array $ids): void {}
+",
+        "process();
+",
+    );
+    let sh = sig_help_at(&backend, &uri, text, 6, 8).await.unwrap();
+    // The vendor tag's type, the plain tag's text.
+    assert_eq!(
+        param_docs(&sh)[0].as_deref(),
+        Some("`list<int>` The IDs to process.")
+    );
+}
+
+#[tokio::test]
 async fn param_without_description_has_no_doc() {
     let backend = create_test_backend();
     let uri = Uri::parse("file:///sig_param_nodoc.php").unwrap();

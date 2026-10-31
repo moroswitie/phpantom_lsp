@@ -892,6 +892,11 @@ pub fn extract_param_description(docblock: &str, var_name: &str) -> Option<Strin
 }
 
 /// Like [`extract_param_description`], but operates on a pre-parsed [`DocblockInfo`].
+///
+/// The first tag for the parameter that has text wins, vendor tags first.
+/// A vendor tag usually restates only the type (`@phpstan-param list<int>
+/// $ids` beside `@param array $ids The ids.`), so a tag without text does
+/// not hide the next one's.
 pub fn extract_param_description_from_info(info: &DocblockInfo, var_name: &str) -> Option<String> {
     for tag in info.tags_by_kind_vendor_first(TagKind::Param) {
         if tag.variable().as_deref() != Some(var_name) {
@@ -903,10 +908,9 @@ pub fn extract_param_description_from_info(info: &DocblockInfo, var_name: &str) 
         let normalised = collapse_newlines(tag.type_description().unwrap_or_default().as_ref());
         let cleaned = strip_html_tags(&normalised);
         let desc = cleaned.trim().to_string();
-        if desc.is_empty() {
-            return None;
+        if !desc.is_empty() {
+            return Some(desc);
         }
-        return Some(desc);
     }
 
     None
