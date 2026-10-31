@@ -2928,3 +2928,35 @@ class ScaffoldingFieldLabel
         return 'title';
     }
 }
+
+// ── Hover modifier scaffolding ──────────────────────────────────────────────
+
+final readonly class ScaffoldingHoverRestrictions
+{
+    public readonly string $explicit;
+
+    public function __construct(public string $label)
+    {
+        $this->explicit = $label;
+    }
+
+    final public function sealed(): string
+    {
+        return $this->label;
+    }
+}
+
+class ScaffoldingHoverProperty
+{
+    public readonly string $label;
+
+    public function __construct(public readonly int $promoted)
+    {
+        $this->label = 'property';
+    }
+}
+
+abstract class ScaffoldingHoverContract
+{
+    abstract public function describe(): string;
+}

@@ -15,6 +15,37 @@ namespace Demo;
 
 use Demo\Scaffolding;
 
+// ── Hover: Modifiers ────────────────────────────────────────────────────────
+
+class HoverModifiersDemo
+{
+    public function demo(Scaffolding\ScaffoldingHoverRestrictions $value): string
+    {
+        // Try: hover on ScaffoldingHoverRestrictions above → final readonly class.
+        // Try: hover on ScaffoldingHoverRestrictions below → constructor in the
+        // same final readonly class wrapper.
+        $created = new Scaffolding\ScaffoldingHoverRestrictions('created');
+
+        // Try: hover on label → public string $label in a readonly class.
+        // Try: hover on explicit → public readonly string $explicit.
+        // Try: hover on sealed → final public function sealed(): string.
+        return $value->label . $created->explicit . $value->sealed();
+    }
+
+    public function ordinary(Scaffolding\ScaffoldingHoverProperty $value): string
+    {
+        // Try: hover on label → public readonly string $label.
+        // Try: hover on promoted → public readonly int $promoted.
+        return $value->label . $value->promoted;
+    }
+
+    public function contract(Scaffolding\ScaffoldingHoverContract $value): string
+    {
+        // Try: hover on describe → abstract public function describe(): string.
+        return $value->describe();
+    }
+}
+
 // ── Hover: Origin Indicators ────────────────────────────────────────────────
 
 class HoverOriginsDemo extends Scaffolding\Model implements Scaffolding\Renderable

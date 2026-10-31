@@ -333,15 +333,31 @@ pub(super) fn build_class_member_block(
     body
 }
 
-/// Return the PHP keyword for a class-like owner.
-///
-/// Produces `"class"`, `"interface"`, `"trait"`, or `"enum"`.
+/// Return the PHP class-like keyword with its native class modifiers.
 pub(super) fn owner_kind_keyword(owner: &ClassInfo) -> &'static str {
     match owner.kind {
         ClassLikeKind::Interface => "interface",
         ClassLikeKind::Trait => "trait",
         ClassLikeKind::Enum => "enum",
-        _ => "class",
+        ClassLikeKind::Class => match (owner.is_abstract, owner.is_final, owner.is_readonly) {
+            (true, _, true) => "abstract readonly class",
+            (true, _, false) => "abstract class",
+            (_, true, true) => "final readonly class",
+            (_, true, false) => "final class",
+            (_, _, true) => "readonly class",
+            _ => "class",
+        },
+    }
+}
+
+/// Return a method's native restriction, leaving interface abstraction implicit.
+pub(super) fn method_modifier_keyword(method: &MethodInfo, owner: &ClassInfo) -> &'static str {
+    if method.is_final {
+        "final "
+    } else if method.is_abstract && owner.kind != ClassLikeKind::Interface {
+        "abstract "
+    } else {
+        ""
     }
 }
 
