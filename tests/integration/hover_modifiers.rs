@@ -45,6 +45,32 @@ fn hover_modifiers_class_type_hints() {
 }
 
 #[test]
+fn hover_modifiers_class_constant_reference() {
+    let backend = create_test_backend();
+    let content = "<?php\nfinal readonly class Example {}\nExample::class;\n";
+    assert_eq!(
+        declaration_at(&backend, content, "Example::class"),
+        "final readonly class Example"
+    );
+}
+
+#[test]
+fn hover_modifiers_docblock_reference_uses_the_declaring_owner() {
+    let backend = create_test_backend();
+    let content = r#"<?php
+interface Contract { public function run(): void; }
+abstract class Base implements Contract {
+    /** @see run() */
+    public function go(): void {}
+}
+"#;
+    assert_eq!(
+        declaration_at(&backend, content, "run() */"),
+        "interface Contract {\n    public function run(): void;\n}"
+    );
+}
+
+#[test]
 fn hover_modifiers_constructor_wrappers() {
     let backend = create_test_backend();
     for modifiers in ["", "final ", "readonly ", "final readonly "] {
@@ -394,7 +420,9 @@ function inspect(Contract $value, Unit $unit, Backed $backed): void {
     Backed::Ready;
     Unknown::missing;
 }
-class Incomplete {
+final readonly class Incomplete {
+    public string $label;
+    public function inspect(): void { $this->label; }
 "#;
     for (needle, expected) in [
         ("Contract $value", "interface Contract"),
@@ -410,9 +438,14 @@ class Incomplete {
             "run();",
             "interface Contract {\n    public function run(): void;\n}",
         ),
+        ("Ready;\n    Backed", "enum Unit {\n    case Ready;\n}"),
         (
             "Ready;",
             "enum Backed: string {\n    case Ready = 'ready';\n}",
+        ),
+        (
+            "label; }",
+            "final readonly class Incomplete {\n    public string $label;\n}",
         ),
     ] {
         assert_eq!(declaration_at(&backend, content, needle), expected);

@@ -333,20 +333,30 @@ pub(super) fn build_class_member_block(
     body
 }
 
-/// Return the PHP class-like keyword with its native class modifiers.
+/// Return the PHP keyword for a class-like owner.
+///
+/// Produces `"class"`, `"interface"`, `"trait"`, or `"enum"`.
 pub(super) fn owner_kind_keyword(owner: &ClassInfo) -> &'static str {
     match owner.kind {
         ClassLikeKind::Interface => "interface",
         ClassLikeKind::Trait => "trait",
         ClassLikeKind::Enum => "enum",
-        ClassLikeKind::Class => match (owner.is_abstract, owner.is_final, owner.is_readonly) {
-            (true, _, true) => "abstract readonly class",
-            (true, _, false) => "abstract class",
-            (_, true, true) => "final readonly class",
-            (_, true, false) => "final class",
-            (_, _, true) => "readonly class",
-            _ => "class",
-        },
+        ClassLikeKind::Class => "class",
+    }
+}
+
+/// Return the display header's keyword with its native class modifiers.
+pub(super) fn class_header_keyword(owner: &ClassInfo) -> &'static str {
+    if owner.kind != ClassLikeKind::Class {
+        return owner_kind_keyword(owner);
+    }
+    match (owner.is_abstract, owner.is_final, owner.is_readonly) {
+        (true, _, true) => "abstract readonly class",
+        (true, _, false) => "abstract class",
+        (_, true, true) => "final readonly class",
+        (_, true, false) => "final class",
+        (_, _, true) => "readonly class",
+        _ => "class",
     }
 }
 

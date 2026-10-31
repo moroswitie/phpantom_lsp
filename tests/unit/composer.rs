@@ -1,6 +1,7 @@
 use phpantom_lsp::composer::{
     extract_path_repo_psr4_mappings, extract_require_once_paths, normalise_path,
-    parse_autoload_classmap, parse_autoload_files, parse_composer_json, resolve_class_path,
+    parse_autoload_classmap, parse_autoload_files, parse_autoload_namespaces, parse_composer_json,
+    resolve_class_path,
 };
 use std::fs;
 use std::path::Path;
@@ -1048,8 +1049,6 @@ fn test_path_repo_psr4_missing_dir_skipped() {
 #[cfg(unix)]
 #[test]
 fn test_psr0_scan_does_not_follow_a_link_back_up_the_tree() {
-    use phpantom_lsp::composer::parse_autoload_namespaces;
-
     let ws = TestWorkspace::new("{}");
     ws.create_php_file(
         "vendor/composer/autoload_namespaces.php",

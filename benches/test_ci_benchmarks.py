@@ -79,18 +79,6 @@ class BenchmarkShardingTests(unittest.TestCase):
         self.output = self.root / "output.json"
         self.stdout = io.StringIO()
         self.stderr = io.StringIO()
-        if os.name == "nt":
-            run = subprocess.run
-
-            def run_fixture(command, **kwargs):
-                # Windows does not execute the fixtures' Python shebangs.
-                if Path(command[0]).parent == (self.build / "bin").resolve():
-                    command = [sys.executable, *command]
-                return run(command, **kwargs)
-
-            patch = mock.patch.object(subprocess, "run", side_effect=run_fixture)
-            patch.start()
-            self.addCleanup(patch.stop)
 
     def binary(self, target, names, mode="normal"):
         path = self.root / target

@@ -536,7 +536,7 @@ impl Backend {
         let code = build_class_member_block(
             &owner.name,
             owner.file_namespace.as_deref(),
-            owner_kind_keyword(owner),
+            class_header_keyword(owner),
             &owner_name_suffix(owner),
             member_line,
         );

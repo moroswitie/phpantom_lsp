@@ -168,7 +168,7 @@ impl Backend {
 
     /// Build hover content for a class/interface/trait/enum.
     pub(crate) fn hover_for_class_info(&self, cls: &ClassInfo, uri: &str, content: &str) -> Hover {
-        let kind_str = owner_kind_keyword(cls);
+        let kind_str = class_header_keyword(cls);
 
         let mut extends_implements = String::new();
 
