@@ -33,6 +33,29 @@ final class RequireExtendsConsumer extends Scaffolding\RequireExtendsTestCase
 
 function runDemoAssertions(): void
 {
+    // ── Hover modifiers ────────────────────────────────────────────────
+    $restrictions = new \ReflectionClass(Scaffolding\ScaffoldingHoverRestrictions::class);
+    assert($restrictions->isFinal(), 'the hover owner cannot be extended');
+    assert($restrictions->isReadOnly(), 'the hover owner makes all its properties readonly');
+    assert($restrictions->getProperty('label')->isReadOnly(), 'the promoted property is implicitly readonly');
+    assert($restrictions->getProperty('explicit')->isReadOnly(), 'the explicit property is readonly too');
+    assert($restrictions->getMethod('sealed')->isFinal(), 'sealed() cannot be overridden');
+    $property = new \ReflectionClass(Scaffolding\ScaffoldingHoverProperty::class);
+    assert(!$property->isReadOnly(), 'an ordinary class can declare readonly properties');
+    assert($property->getProperty('label')->isReadOnly(), 'the ordinary property is readonly');
+    assert($property->getProperty('promoted')->isReadOnly(), 'the explicitly readonly promoted property is readonly');
+    $contract = new \ReflectionClass(Scaffolding\ScaffoldingHoverContract::class);
+    assert($contract->isAbstract(), 'the hover contract cannot be instantiated');
+    assert($contract->getMethod('describe')->isAbstract(), 'describe() must be implemented');
+    $hoverModifiers = new HoverModifiersDemo();
+    $restricted = new Scaffolding\ScaffoldingHoverRestrictions('value');
+    assert($hoverModifiers->demo($restricted) === 'valuecreatedvalue', 'the readonly values and final method return strings');
+    assert($hoverModifiers->ordinary(new Scaffolding\ScaffoldingHoverProperty(2)) === 'property2', 'the ordinary and promoted readonly properties retain their values');
+    $described = new class extends Scaffolding\ScaffoldingHoverContract {
+        public function describe(): string { return 'contract'; }
+    };
+    assert($hoverModifiers->contract($described) === 'contract', 'the abstract contract returns the string supplied by its implementation');
+
     // ── Body Return Type Inference ──────────────────────────────────────
     $factory = new Scaffolding\ScaffoldingUntypedFactory();
     $pen = $factory->createPen();

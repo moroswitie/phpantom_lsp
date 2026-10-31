@@ -6,6 +6,44 @@ use crate::php_type::PhpType;
 use crate::util::short_name;
 
 #[test]
+fn class_source_keywords_and_display_headers() {
+    for (kind, keyword) in [
+        (ClassLikeKind::Class, "class"),
+        (ClassLikeKind::Interface, "interface"),
+        (ClassLikeKind::Trait, "trait"),
+        (ClassLikeKind::Enum, "enum"),
+    ] {
+        for (is_abstract, is_final, is_readonly, header) in [
+            (false, false, false, "class"),
+            (false, false, true, "readonly class"),
+            (false, true, false, "final class"),
+            (false, true, true, "final readonly class"),
+            (true, false, false, "abstract class"),
+            (true, false, true, "abstract readonly class"),
+            (true, true, false, "abstract class"),
+            (true, true, true, "abstract readonly class"),
+        ] {
+            let owner = ClassInfo {
+                kind,
+                is_abstract,
+                is_final,
+                is_readonly,
+                ..ClassInfo::default()
+            };
+            assert_eq!(owner_kind_keyword(&owner), keyword);
+            assert_eq!(
+                class_header_keyword(&owner),
+                if kind == ClassLikeKind::Class {
+                    header
+                } else {
+                    keyword
+                }
+            );
+        }
+    }
+}
+
+#[test]
 fn extract_description_simple() {
     let doc = "/** This is a simple description. */";
     assert_eq!(

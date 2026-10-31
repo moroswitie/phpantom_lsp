@@ -341,7 +341,33 @@ pub(super) fn owner_kind_keyword(owner: &ClassInfo) -> &'static str {
         ClassLikeKind::Interface => "interface",
         ClassLikeKind::Trait => "trait",
         ClassLikeKind::Enum => "enum",
+        ClassLikeKind::Class => "class",
+    }
+}
+
+/// Return the display header's keyword with its native class modifiers.
+pub(super) fn class_header_keyword(owner: &ClassInfo) -> &'static str {
+    if owner.kind != ClassLikeKind::Class {
+        return owner_kind_keyword(owner);
+    }
+    match (owner.is_abstract, owner.is_final, owner.is_readonly) {
+        (true, _, true) => "abstract readonly class",
+        (true, _, false) => "abstract class",
+        (_, true, true) => "final readonly class",
+        (_, true, false) => "final class",
+        (_, _, true) => "readonly class",
         _ => "class",
+    }
+}
+
+/// Return a method's native restriction, leaving interface abstraction implicit.
+pub(super) fn method_modifier_keyword(method: &MethodInfo, owner: &ClassInfo) -> &'static str {
+    if method.is_final {
+        "final "
+    } else if method.is_abstract && owner.kind != ClassLikeKind::Interface {
+        "abstract "
+    } else {
+        ""
     }
 }
 
