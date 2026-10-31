@@ -199,6 +199,7 @@ mod formatting_range;
 mod framework_resources;
 mod hover;
 mod hover_declarations;
+mod hover_declarations_locals;
 mod hover_declarations_members;
 mod hover_modifiers;
 mod implementation;
