@@ -149,11 +149,17 @@ pub(crate) fn find_documented_class_at_offset(
     if let Some(class) = find_class_at_offset(classes, offset) {
         return Some(class);
     }
-    classes.iter().map(|c| c.as_ref()).find(|c| {
-        c.class_docblock.as_deref().is_some_and(|docblock| {
-            let start = c.class_docblock_start;
-            start <= offset && (offset as usize) < start as usize + docblock.len()
-        })
+    classes
+        .iter()
+        .map(|c| c.as_ref())
+        .find(|c| class_docblock_contains(c, offset))
+}
+
+/// Whether `offset` lies inside `class`'s own docblock.
+pub(crate) fn class_docblock_contains(class: &ClassInfo, offset: u32) -> bool {
+    class.class_docblock.as_deref().is_some_and(|docblock| {
+        let start = class.class_docblock_start;
+        start <= offset && (offset as usize) < start as usize + docblock.len()
     })
 }
 

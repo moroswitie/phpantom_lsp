@@ -420,6 +420,7 @@ pub(super) fn collect_destructuring_var_defs(
                     effective_from,
                     nesting_depth: 0,
                     block_end: u32::MAX,
+                    is_promoted: false,
                 });
             }
             // Nested destructuring: `[[$a, $b], $c] = ...`

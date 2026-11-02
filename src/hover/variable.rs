@@ -5,22 +5,25 @@
 //! parameters and scalar types.  Union types are shown as separate code
 //! blocks divided by a horizontal rule.
 
+use std::sync::Arc;
+
 use tower_lsp_server::gen_lsp_types::Hover;
 
 use crate::Backend;
-use crate::class_lookup::{Fqn, ResolvedClassLoader};
+use crate::class_lookup::{Fqn, ResolvedClassLoader, find_class_at_offset};
 use crate::php_type::PhpType;
 use crate::symbol_map::{SymbolSpan, VarDefKind};
 use crate::type_engine::resolver::FileCtx;
 use crate::type_engine::variable::resolution::VarQuery;
-use crate::types::{ClassInfo, FileContext, FunctionInfo};
+use crate::types::{ClassInfo, FileContext, FunctionInfo, PropertyInfo};
 
 use super::HoverSite;
 use super::formatting::{make_hover, namespace_line};
 
 impl Backend {
     /// Hover for a `$variable` the symbol map found, except at a
-    /// definition whose type is already on screen.
+    /// definition whose type is already on screen. With hover on
+    /// declarations on, a property declaration shows its property.
     pub(super) fn hover_variable_symbol(
         &self,
         site: &HoverSite,
@@ -36,22 +39,31 @@ impl Backend {
         } = *site;
         // At a variable definition site, `variable_definition_hover`
         // decides, together with the promoted-parameter check below,
-        // whether a hover is shown at all.
-        if let Some(def_kind) = self.lookup_var_def_kind_at(uri, name, cursor_offset) {
-            let suppressed =
-                match variable_definition_hover(&def_kind, self.hover_on_declarations_enabled()) {
-                    VariableDefinitionHover::Suppress => true,
-                    VariableDefinitionHover::ShowVariable => {
-                        // A constructor-promoted parameter declares a
-                        // property, not a local variable, so it follows
-                        // the same "already visible on screen" rule as
-                        // any other property declaration.
-                        def_kind == VarDefKind::Parameter
-                            && self.is_promoted_property_param(uri, symbol.start)
-                    }
-                };
-            if suppressed {
-                return None;
+        // whether a hover is shown at all, and which one.
+        let definition = self.symbol_map_for(uri).and_then(|map| {
+            map.var_def_at(name, cursor_offset)
+                .map(|def| (def.kind.clone(), def.is_promoted))
+        });
+        if let Some((def_kind, is_promoted)) = definition {
+            let hover_on_declarations = self.hover_on_declarations_enabled();
+            match variable_definition_hover(&def_kind, is_promoted, hover_on_declarations) {
+                VariableDefinitionHover::Suppress => return None,
+                VariableDefinitionHover::ShowProperty => {
+                    let (owner, property) = property_declared_at(&ctx.classes, symbol.start, name)?;
+                    return self.hover_property_declaration(site, owner, property);
+                }
+                // With the switch off, a constructor-promoted parameter
+                // declares a property, not a local variable, so it
+                // follows the same "already visible on screen" rule as
+                // any other property declaration.
+                VariableDefinitionHover::ShowVariable
+                    if !hover_on_declarations
+                        && def_kind == VarDefKind::Parameter
+                        && self.is_promoted_property_param(uri, symbol.start) =>
+                {
+                    return None;
+                }
+                VariableDefinitionHover::ShowVariable => {}
             }
         }
         self.hover_variable(name, uri, content, cursor_offset, site.current_class(), ctx)
@@ -162,6 +174,9 @@ impl Backend {
 enum VariableDefinitionHover {
     /// Show the ordinary variable hover.
     ShowVariable,
+    /// Show the hover of the property declared here, or nothing when
+    /// the file's classes do not record it; never a variable hover.
+    ShowProperty,
     /// Show nothing: the declaration is already on screen.
     Suppress,
 }
@@ -169,20 +184,23 @@ enum VariableDefinitionHover {
 /// The hover policy for one kind of variable definition site.
 ///
 /// Every `VarDefKind` is named, so a kind is never covered by accident
-/// through a catch-all. The caller passes the declaration-hover
-/// switch; no entry's answer depends on it.
+/// through a catch-all. The caller passes whether the definition is a
+/// promoted constructor parameter, and the declaration-hover switch.
 ///
-/// The `Parameter` entry is not the whole policy for parameters: the
-/// caller also suppresses a promoted parameter, which declares a
-/// property rather than a local variable.
+/// With the switch off, the `Parameter` entry is not the whole policy
+/// for parameters: the caller also suppresses a promoted parameter,
+/// which declares a property rather than a local variable.
 fn variable_definition_hover(
     kind: &VarDefKind,
-    _hover_on_declarations: bool,
+    is_promoted: bool,
+    hover_on_declarations: bool,
 ) -> VariableDefinitionHover {
     match kind {
         VarDefKind::Assignment => VariableDefinitionHover::ShowVariable,
         VarDefKind::CompoundAssignment => VariableDefinitionHover::ShowVariable,
+        VarDefKind::Parameter if hover_on_declarations => parameter_declaration_route(is_promoted),
         VarDefKind::Parameter => VariableDefinitionHover::ShowVariable,
+        VarDefKind::Property if hover_on_declarations => VariableDefinitionHover::ShowProperty,
         VarDefKind::Property => VariableDefinitionHover::Suppress,
         VarDefKind::Foreach => VariableDefinitionHover::ShowVariable,
         VarDefKind::Catch => VariableDefinitionHover::ShowVariable,
@@ -195,6 +213,42 @@ fn variable_definition_hover(
         VarDefKind::DocblockVar => VariableDefinitionHover::Suppress,
         VarDefKind::Unset => VariableDefinitionHover::Suppress,
     }
+}
+
+/// What hover shows at a parameter when hover on declarations is on: a
+/// promoted parameter declares a property, any other a local variable.
+///
+/// Promotion is read from the parameter's own syntax, never from the
+/// file's classes, so missing class information can neither turn a
+/// promoted property into a variable hover nor hide an ordinary
+/// parameter's.
+fn parameter_declaration_route(is_promoted: bool) -> VariableDefinitionHover {
+    if is_promoted {
+        VariableDefinitionHover::ShowProperty
+    } else {
+        VariableDefinitionHover::ShowVariable
+    }
+}
+
+/// The class and the real property that the `$name` token at `offset`
+/// declares: an ordinary property, or a constructor parameter that
+/// promotes one. `None` when `classes`, the file's class information,
+/// does not record it.
+///
+/// The name is checked as well as the offset: class information that
+/// lags behind the buffer can hold another property at the same offset,
+/// as after a rename to a name of the same length.
+fn property_declared_at<'a>(
+    classes: &'a [Arc<ClassInfo>],
+    offset: u32,
+    name: &str,
+) -> Option<(&'a ClassInfo, &'a PropertyInfo)> {
+    let owner = find_class_at_offset(classes, offset)?;
+    let property = owner
+        .properties
+        .iter()
+        .find(|property| property.name_offset == offset && property.name == name)?;
+    Some((owner, property))
 }
 
 /// Build the hover body for a variable, rendering union types as
@@ -307,8 +361,9 @@ mod tests {
 
     #[test]
     fn variable_definition_hover_names_every_kind_with_its_current_policy() {
-        use VariableDefinitionHover::{ShowVariable, Suppress};
+        use VariableDefinitionHover::{ShowProperty, ShowVariable, Suppress};
 
+        // The policy with the switch off, and how the switch changes it.
         let policies = [
             (VarDefKind::Assignment, ShowVariable),
             (VarDefKind::CompoundAssignment, ShowVariable),
@@ -325,14 +380,105 @@ mod tests {
             (VarDefKind::DocblockVar, Suppress),
             (VarDefKind::Unset, Suppress),
         ];
-        for hover_on_declarations in [false, true] {
-            for (kind, expected) in &policies {
+        let switched_on = |kind: &VarDefKind, is_promoted: bool, off| match kind {
+            VarDefKind::Parameter if is_promoted => ShowProperty,
+            VarDefKind::Property => ShowProperty,
+            _ => off,
+        };
+        for is_promoted in [false, true] {
+            for (kind, off) in &policies {
                 assert_eq!(
-                    variable_definition_hover(kind, hover_on_declarations),
-                    *expected,
-                    "for {kind:?} with the switch {hover_on_declarations}"
+                    variable_definition_hover(kind, is_promoted, false),
+                    *off,
+                    "for {kind:?}, promoted {is_promoted}, with the switch off"
+                );
+                assert_eq!(
+                    variable_definition_hover(kind, is_promoted, true),
+                    switched_on(kind, is_promoted, *off),
+                    "for {kind:?}, promoted {is_promoted}, with the switch on"
                 );
             }
         }
+    }
+
+    #[test]
+    fn parameter_declaration_route_follows_promotion_alone() {
+        assert_eq!(
+            parameter_declaration_route(true),
+            VariableDefinitionHover::ShowProperty
+        );
+        assert_eq!(
+            parameter_declaration_route(false),
+            VariableDefinitionHover::ShowVariable
+        );
+    }
+
+    const PROMOTED: &str = "<?php\nclass Invoice {\n    public function __construct(private int $total, int $discount) {}\n}\n";
+
+    fn offset_of(needle: &str) -> u32 {
+        PROMOTED.find(needle).expect("needle is in PROMOTED") as u32
+    }
+
+    #[test]
+    fn property_declared_at_finds_the_property_a_parameter_promotes() {
+        let backend = Backend::new_test();
+        backend.update_ast("file:///test.php", PROMOTED);
+        let ctx = backend.file_context("file:///test.php");
+
+        let (owner, property) =
+            property_declared_at(&ctx.classes, offset_of("$total"), "total").expect("promoted");
+        assert_eq!(owner.name, "Invoice");
+        assert_eq!(property.name, "total");
+        assert!(property_declared_at(&ctx.classes, offset_of("$discount"), "discount").is_none());
+    }
+
+    /// Class information that lags behind the buffer can hold another
+    /// property at the hovered offset. Here it still records `$paid` and
+    /// `$total` where the buffer renamed them to `$owed` and `$gross`,
+    /// names of the same length, so every offset still matches.
+    #[test]
+    fn property_declared_at_needs_the_hovered_name_as_well_as_the_offset() {
+        const STALE: &str = "<?php\nclass Invoice {\n    public int $paid;\n    public function __construct(private int $total) {}\n}\n";
+        let backend = Backend::new_test();
+        backend.update_ast("file:///test.php", STALE);
+        let ctx = backend.file_context("file:///test.php");
+
+        for (recorded, renamed) in [("paid", "owed"), ("total", "gross")] {
+            let offset = STALE
+                .find(&format!("${recorded}"))
+                .expect("the property is in STALE") as u32;
+            assert!(
+                property_declared_at(&ctx.classes, offset, recorded).is_some(),
+                "${recorded} is recorded at its own offset"
+            );
+            assert!(
+                property_declared_at(&ctx.classes, offset, renamed).is_none(),
+                "${renamed} must not find ${recorded}, recorded at the same offset"
+            );
+        }
+    }
+
+    /// Builds a state by hand: the file's symbol map stays while its
+    /// class information is removed. This does not show that a session
+    /// reaches that state, only that the promotion check cannot turn a
+    /// promoted property into a variable hover if one did.
+    #[test]
+    fn constructed_promoted_parameter_without_class_information_finds_no_property() {
+        let uri = "file:///test.php";
+        let backend = Backend::new_test();
+        backend.update_ast(uri, PROMOTED);
+        backend.symbols.uri_classes_index.write().remove(uri);
+        assert!(backend.shared_classes_for_uri(uri).is_none());
+
+        let map = backend.symbol_map_for(uri).expect("the symbol map stays");
+        let def = map
+            .var_def_at("total", offset_of("$total"))
+            .expect("the parameter is still a definition");
+        assert_eq!(
+            variable_definition_hover(&def.kind, def.is_promoted, true),
+            VariableDefinitionHover::ShowProperty
+        );
+        let ctx = backend.file_context(uri);
+        assert!(property_declared_at(&ctx.classes, offset_of("$total"), "total").is_none());
     }
 }

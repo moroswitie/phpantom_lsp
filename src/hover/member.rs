@@ -9,7 +9,9 @@ use std::sync::Arc;
 use tower_lsp_server::gen_lsp_types::{Contents, Hover};
 
 use crate::Backend;
-use crate::class_lookup::{Fqn, ResolvedClassLoader, find_class_at_offset};
+use crate::class_lookup::{
+    Fqn, ResolvedClassLoader, class_docblock_contains, find_documented_class_at_offset,
+};
 use crate::php_type::PhpType;
 use crate::references::MemberRefKind;
 use crate::symbol_map::SubjectText;
@@ -522,14 +524,16 @@ impl Backend {
     /// Hover for a method, class constant or enum case at its
     /// declaration site: the member declared there, enriched with its
     /// inherited documentation, exactly as hovering a usage of the
-    /// member renders it.
+    /// member renders it. A `@method` or `@property` tag in a class's
+    /// own docblock answers through
+    /// [`hover_docblock_member_declaration`](Self::hover_docblock_member_declaration).
     ///
-    /// The containing class must itself declare a real member of that
-    /// name at this very position. A docblock tag (`@property`,
-    /// `@method`) declares no such member, so it answers nothing here,
-    /// even when a real member shares its name. The class must also be
-    /// the declaration its name resolves to, because the enrichment
-    /// loads it again by name.
+    /// Anywhere else, the containing class must itself declare a real
+    /// member of that name at this very position. A tag in any other
+    /// docblock declares no such member, so it answers nothing, even
+    /// when a real member shares its name. The class must also be the
+    /// declaration its name resolves to, because the enrichment loads
+    /// it again by name.
     pub(super) fn hover_member_declaration(
         &self,
         site: &HoverSite,
@@ -537,10 +541,13 @@ impl Backend {
         name: &str,
         is_method: bool,
     ) -> Option<Hover> {
-        let owner = find_class_at_offset(&site.ctx.classes, site.offset)?;
+        let owner = find_documented_class_at_offset(&site.ctx.classes, site.offset)?;
         let resolved_class_loader = site.loaders.resolved_class_loader();
         if !self.is_resolved_class_declaration(owner, site.uri, resolved_class_loader) {
             return None;
+        }
+        if class_docblock_contains(owner, symbol_start) {
+            return self.hover_docblock_member_declaration(site, owner, name, is_method);
         }
         let declared_here = if is_method {
             owner
@@ -572,6 +579,79 @@ impl Backend {
             let constant = merged.get_constant(name)?;
             Some(self.hover_for_constant(constant, &merged, resolved_class_loader))
         }
+    }
+
+    /// Hover for the name in a `@method` or `@property` tag (or a
+    /// `-read` / `-write` variant) of `owner`'s own docblock: what
+    /// hovering a usage of that member on `owner` shows. The member is
+    /// selected from the fully resolved class, just as for a usage, so
+    /// a real member of the same name shows wherever the virtual-member
+    /// merge keeps it over the tag.
+    fn hover_docblock_member_declaration(
+        &self,
+        site: &HoverSite,
+        owner: &ClassInfo,
+        name: &str,
+        is_method: bool,
+    ) -> Option<Hover> {
+        let resolved_class_loader = site.loaders.resolved_class_loader();
+        let merged = crate::virtual_members::resolve_class_fully_cached(
+            owner,
+            resolved_class_loader,
+            &self.resolved_class_cache,
+        );
+        if is_method {
+            let method = merged.get_method_ci(name)?;
+            let declaring = find_declaring_class(
+                &merged,
+                name,
+                &MemberKindForOrigin::Method,
+                resolved_class_loader,
+            );
+            Some(self.hover_for_method(
+                method,
+                &declaring,
+                resolved_class_loader,
+                site.uri,
+                site.content,
+            ))
+        } else {
+            let property = merged.get_property(name)?;
+            let declaring = find_declaring_class(
+                &merged,
+                name,
+                &MemberKindForOrigin::Property,
+                resolved_class_loader,
+            );
+            Some(self.hover_for_property(property, &declaring, resolved_class_loader))
+        }
+    }
+
+    /// Hover for a property at its declaration site, an ordinary one or
+    /// one a constructor parameter promotes: the property `owner`
+    /// declares there, enriched with its inherited documentation,
+    /// exactly as hovering `$this->name` or `static::$name` renders it.
+    ///
+    /// Like a method, it answers only when `owner` is the declaration
+    /// its name resolves to, because the enrichment loads it again by
+    /// name.
+    pub(super) fn hover_property_declaration(
+        &self,
+        site: &HoverSite,
+        owner: &ClassInfo,
+        property: &PropertyInfo,
+    ) -> Option<Hover> {
+        let resolved_class_loader = site.loaders.resolved_class_loader();
+        if !self.is_resolved_class_declaration(owner, site.uri, resolved_class_loader) {
+            return None;
+        }
+        let merged = crate::virtual_members::resolve_class_fully_cached(
+            owner,
+            resolved_class_loader,
+            &self.resolved_class_cache,
+        );
+        let property = merged.get_property(&property.name)?;
+        Some(self.hover_for_property(property, &merged, resolved_class_loader))
     }
 
     /// Close out a member's hover: append the rendered declaration and,

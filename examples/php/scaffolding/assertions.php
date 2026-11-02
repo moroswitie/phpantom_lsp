@@ -1354,6 +1354,8 @@ function runDemoAssertions(): void
     assert($declarationDemo->greeting() === 'hello', 'DeclarationHoverDemo::greeting() must return the string its declaration shows');
     assert(DeclarationHoverDemo::MAX_GREETINGS === 3, 'DeclarationHoverDemo::MAX_GREETINGS must be the int 3 its declaration shows');
     assert(DECLARATION_GREETING === 'hello', 'DECLARATION_GREETING must be the string its declaration shows');
+    assert($declarationDemo->visits() === 0, 'DeclarationHoverDemo::$visits must be the int its promoted parameter shows');
+    assert($declarationDemo->nickname === 'Ada', 'DeclarationHoverDemo::$nickname must be the string its @property tag shows');
 
     // ── Switch statement type tracking ──────────────────────────────────
     $switchType = 'reviews';
