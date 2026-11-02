@@ -198,6 +198,7 @@ mod formatting_blade;
 mod formatting_range;
 mod framework_resources;
 mod hover;
+mod hover_metadata_docblocks;
 mod hover_metadata_inheritance;
 mod hover_metadata_types;
 mod hover_metadata_virtual;
