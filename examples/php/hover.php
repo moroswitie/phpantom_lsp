@@ -165,3 +165,14 @@ class DeclarationHoverDemo
 }
 
 const DECLARATION_GREETING = 'hello';
+
+// Try: hover on `$greeter` in the `static` declaration below → the same
+// `$greeter = DeclarationHoverDemo` that hovering `return $greeter` shows.
+function sharedDeclarationHoverDemo(): DeclarationHoverDemo
+{
+    static $greeter;
+    if ($greeter === null) {
+        $greeter = new DeclarationHoverDemo();
+    }
+    return $greeter;
+}

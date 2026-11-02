@@ -41,6 +41,8 @@ Agents navigate mostly to declarations: workspace symbols, document symbols, go-
 
 Turn declaration hover on and hovering a class, interface, trait or enum (its name or its keyword), a method, a property (a promoted constructor property included), a class constant, an enum case, a function or a top-level constant at its declaration, or the name in a `@property` or `@method` tag, shows the same hover as hovering a use of it. It is off by default and never changes what hovering a use shows.
 
+A local `static` or `global` declaration shows the variable's type, the same as hovering a read of the variable.
+
 For Opencode, add the flag to the command:
 
 ```json

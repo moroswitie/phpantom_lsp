@@ -204,7 +204,9 @@ fn variable_definition_hover(
         VarDefKind::Property => VariableDefinitionHover::Suppress,
         VarDefKind::Foreach => VariableDefinitionHover::ShowVariable,
         VarDefKind::Catch => VariableDefinitionHover::ShowVariable,
+        VarDefKind::StaticDecl if hover_on_declarations => VariableDefinitionHover::ShowVariable,
         VarDefKind::StaticDecl => VariableDefinitionHover::Suppress,
+        VarDefKind::GlobalDecl if hover_on_declarations => VariableDefinitionHover::ShowVariable,
         VarDefKind::GlobalDecl => VariableDefinitionHover::Suppress,
         VarDefKind::ArrayDestructuring => VariableDefinitionHover::ShowVariable,
         VarDefKind::ListDestructuring => VariableDefinitionHover::ShowVariable,
@@ -383,6 +385,7 @@ mod tests {
         let switched_on = |kind: &VarDefKind, is_promoted: bool, off| match kind {
             VarDefKind::Parameter if is_promoted => ShowProperty,
             VarDefKind::Property => ShowProperty,
+            VarDefKind::StaticDecl | VarDefKind::GlobalDecl => ShowVariable,
             _ => off,
         };
         for is_promoted in [false, true] {
