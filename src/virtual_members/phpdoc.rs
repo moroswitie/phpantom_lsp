@@ -21,7 +21,9 @@ use crate::class_lookup::{Fqn, ResolvedClassLoader};
 use crate::inheritance;
 use crate::inheritance::bind_template_args;
 use crate::php_type::PhpType;
-use crate::types::{ClassInfo, DocblockMembers, MethodInfo, PropertyInfo, PropertySource};
+use crate::types::{
+    ClassInfo, DocblockMembers, DocblockProperty, MethodInfo, PropertyInfo, PropertySource,
+};
 
 use super::{VirtualMemberProvider, VirtualMembers};
 use mixins::{
@@ -35,19 +37,18 @@ pub(super) use mixins::uses_forwards_calls;
 /// Build a virtual [`PropertyInfo`] from a parsed `@property` tag,
 /// substituting template parameters in the declared type when `subs`
 /// carries bindings for the docblock's owner.
-fn doc_property(
-    name: Atom,
-    type_hint: Option<&PhpType>,
-    subs: &HashMap<String, PhpType>,
-) -> PropertyInfo {
-    let type_hint = type_hint.map(|t| {
+fn doc_property(property: &DocblockProperty, subs: &HashMap<String, PhpType>) -> PropertyInfo {
+    let type_hint = property.type_hint.as_ref().map(|t| {
         if subs.is_empty() {
             t.clone()
         } else {
             t.substitute(subs)
         }
     });
-    PropertyInfo::virtual_property_owned(name, type_hint)
+    PropertyInfo {
+        description: property.description.clone(),
+        ..PropertyInfo::virtual_property_owned(property.name, type_hint)
+    }
 }
 
 /// Like [`doc_property`], but marked [`PropertySource::DocblockTag`].
@@ -58,14 +59,10 @@ fn doc_property(
 /// virtual-member merge.  `@mixin`-borrowed tags stay unmarked: they
 /// describe the mixin class, and the provider treats them as the
 /// lowest-precedence source.
-fn doc_tag_property(
-    name: Atom,
-    type_hint: Option<&PhpType>,
-    subs: &HashMap<String, PhpType>,
-) -> PropertyInfo {
+fn doc_tag_property(property: &DocblockProperty, subs: &HashMap<String, PhpType>) -> PropertyInfo {
     PropertyInfo {
         source: Some(PropertySource::DocblockTag),
-        ..doc_property(name, type_hint, subs)
+        ..doc_property(property, subs)
     }
 }
 
@@ -314,10 +311,10 @@ impl DocTags {
             self.seen_methods.insert(m.name);
             self.methods.push(Arc::clone(m));
         }
-        for (name, type_hint) in &doc.properties {
-            self.seen_props.insert(*name);
+        for property in &doc.properties {
+            self.seen_props.insert(property.name);
             self.properties
-                .push(doc_tag_property(*name, type_hint.as_ref(), &HashMap::new()));
+                .push(doc_tag_property(property, &HashMap::new()));
         }
     }
 
@@ -329,10 +326,9 @@ impl DocTags {
                 self.methods.push(substituted_doc_method(m, subs));
             }
         }
-        for (name, type_hint) in &doc.properties {
-            if self.seen_props.insert(*name) {
-                self.properties
-                    .push(doc_tag_property(*name, type_hint.as_ref(), subs));
+        for property in &doc.properties {
+            if self.seen_props.insert(property.name) {
+                self.properties.push(doc_tag_property(property, subs));
             }
         }
     }
@@ -401,12 +397,12 @@ pub(crate) fn inherited_property_tags(
     };
 
     if let Some(doc) = class.doc_members.as_deref() {
-        for (name, type_hint) in &doc.properties {
-            walk.decided.insert(*name);
-            if let Some(hint) = type_hint
-                && !class.properties.iter().any(|p| p.name == *name)
+        for property in &doc.properties {
+            walk.decided.insert(property.name);
+            if let Some(hint) = &property.type_hint
+                && !class.properties.iter().any(|p| p.name == property.name)
             {
-                walk.tags.push((*name, hint.clone()));
+                walk.tags.push((property.name, hint.clone()));
             }
         }
     }
@@ -459,17 +455,17 @@ struct PropertyTagWalk<'c, 'l> {
 impl PropertyTagWalk<'_, '_> {
     /// Take the tags of `doc` whose name no nearer source decided.
     fn add(&mut self, doc: &DocblockMembers, subs: &HashMap<String, PhpType>) {
-        for (name, type_hint) in &doc.properties {
-            if !self.decided.insert(*name) || self.declares_real(*name) {
+        for property in &doc.properties {
+            if !self.decided.insert(property.name) || self.declares_real(property.name) {
                 continue;
             }
-            if let Some(hint) = type_hint {
+            if let Some(hint) = &property.type_hint {
                 let hint = if subs.is_empty() {
                     hint.clone()
                 } else {
                     hint.substitute(subs)
                 };
-                self.tags.push((*name, hint));
+                self.tags.push((property.name, hint));
             }
         }
     }

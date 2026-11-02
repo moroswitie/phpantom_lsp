@@ -171,6 +171,17 @@ pub mod attribute_target {
     pub const TARGET_ALL: u8 = (1 << 6) - 1; // 63
 }
 
+/// A magic property declared by a class-level PHPDoc tag.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DocblockProperty {
+    /// The property name without its `$` prefix.
+    pub name: Atom,
+    /// The declared type, or `None` for an untyped `@property $name`.
+    pub type_hint: Option<PhpType>,
+    /// The prose following the property name, if any.
+    pub description: Option<String>,
+}
+
 /// Virtual members declared by a class-level docblock's `@method` and
 /// `@property` tags.
 ///
@@ -182,10 +193,8 @@ pub mod attribute_target {
 pub struct DocblockMembers {
     /// `@method` / `@psalm-method` signatures, in source order.
     pub methods: Vec<Arc<MethodInfo>>,
-    /// `@property`, `@property-read`, and `@property-write` entries as
-    /// `(name, declared type)`.  The name carries no `$` prefix, and the
-    /// type is `None` for an untyped `@property $name`.
-    pub properties: Vec<(Atom, Option<PhpType>)>,
+    /// `@property`, `@property-read`, and `@property-write` entries, in source order.
+    pub properties: Vec<DocblockProperty>,
 }
 
 impl DocblockMembers {
@@ -720,9 +729,9 @@ impl ClassInfo {
     }
 
     /// `@property` / `@property-read` / `@property-write` tags declared on
-    /// this class's own docblock, as `(name, declared type)`.
+    /// this class's own docblock.
     #[inline]
-    pub fn doc_properties(&self) -> &[(Atom, Option<PhpType>)] {
+    pub fn doc_properties(&self) -> &[DocblockProperty] {
         self.doc_members.as_deref().map_or(&[], |d| &d.properties)
     }
 

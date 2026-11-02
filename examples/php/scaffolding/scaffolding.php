@@ -607,8 +607,8 @@ class ScaffoldingAppConfig
 }
 
 /**
- * @property string $gorilla
- * @method bool hyena(string $x)
+ * @property string $gorilla The gorilla's display label.
+ * @method bool hyena(string $x) Checks whether the hyena accepts a call.
  */
 class Zoo extends ZooBase implements ZooContract
 {

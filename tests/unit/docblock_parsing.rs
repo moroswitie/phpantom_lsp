@@ -178,33 +178,91 @@ fn method_tag_malformed_does_not_panic() {
     assert!(extract_method_tags("/** @method static >() */").is_empty());
 }
 
+#[test]
+fn method_tag_descriptions() {
+    for (tag, return_type, description) in [
+        ("@method string render()", Some("string"), None),
+        (
+            "@method string render() Renders the post.",
+            Some("string"),
+            Some("Renders the post."),
+        ),
+        (
+            "@method render() Renders the post.",
+            None,
+            Some("Renders the post."),
+        ),
+        ("@method render(): int", Some("int"), None),
+        (
+            "@method render(): int Renders the post.",
+            Some("int"),
+            Some("Renders the post."),
+        ),
+        (
+            "@method static render(): array{name: string} Renders the post.",
+            Some("array{name: string}"),
+            Some("Renders the post."),
+        ),
+        (
+            "@method string render(): int Renders the post.",
+            Some("string"),
+            Some("Renders the post."),
+        ),
+        (
+            "@method string render() Renders\n * the post.",
+            Some("string"),
+            Some("Renders the post."),
+        ),
+        (
+            "@method render(): list<string> Renders\n * the post.",
+            Some("list<string>"),
+            Some("Renders the post."),
+        ),
+    ] {
+        let methods = extract_method_tags(&format!("/**\n * {tag}\n */"));
+        assert_eq!(methods.len(), 1, "{tag}");
+        assert_eq!(
+            methods[0].return_type,
+            return_type.map(PhpType::parse),
+            "{tag}"
+        );
+        let actual = methods[0]
+            .description
+            .as_ref()
+            .map(|desc| desc.split_whitespace().collect::<Vec<_>>().join(" "));
+        assert_eq!(actual.as_deref(), description, "{tag}");
+    }
+}
+
 // ─── @property tag extraction ───────────────────────────────────────
+
+fn property_tag(name: &str, type_hint: Option<&str>) -> DocblockProperty {
+    DocblockProperty {
+        name: atom(name),
+        type_hint: type_hint.map(PhpType::parse),
+        description: None,
+    }
+}
 
 #[test]
 fn property_tag_simple() {
     let doc = "/** @property Session $session */";
     let props = extract_property_tags(doc);
-    assert_eq!(
-        props,
-        vec![(atom("session"), Some(PhpType::parse("Session")))]
-    );
+    assert_eq!(props, vec![property_tag("session", Some("Session"))]);
 }
 
 #[test]
 fn property_tag_nullable() {
     let doc = "/** @property ?int $count */";
     let props = extract_property_tags(doc);
-    assert_eq!(props, vec![(atom("count"), Some(PhpType::parse("?int")))]);
+    assert_eq!(props, vec![property_tag("count", Some("?int"))]);
 }
 
 #[test]
 fn property_tag_union_with_null() {
     let doc = "/** @property null|int $latest_id */";
     let props = extract_property_tags(doc);
-    assert_eq!(
-        props,
-        vec![(atom("latest_id"), Some(PhpType::parse("null|int")))]
-    );
+    assert_eq!(props, vec![property_tag("latest_id", Some("null|int"))]);
 }
 
 #[test]
@@ -213,7 +271,7 @@ fn property_tag_fqn() {
     let props = extract_property_tags(doc);
     assert_eq!(
         props,
-        vec![(atom("user"), Some(PhpType::parse("\\App\\Models\\User")))]
+        vec![property_tag("user", Some("\\App\\Models\\User"))]
     );
 }
 
@@ -230,16 +288,13 @@ fn property_tag_multiple() {
     // `null|int` is preserved in the type hint.
     assert_eq!(
         props[0],
-        (
-            atom("latest_subscription_agreement_id"),
-            Some(PhpType::parse("null|int"))
-        )
+        property_tag("latest_subscription_agreement_id", Some("null|int"))
     );
     assert_eq!(
         props[1],
-        (
-            atom("mobile_verification_state"),
-            Some(PhpType::parse("UserMobileVerificationState"))
+        property_tag(
+            "mobile_verification_state",
+            Some("UserMobileVerificationState")
         )
     );
 }
@@ -254,15 +309,15 @@ fn property_tag_read_write_variants() {
     );
     let props = extract_property_tags(doc);
     assert_eq!(props.len(), 2);
-    assert_eq!(props[0], (atom("name"), Some(PhpType::parse("string"))));
-    assert_eq!(props[1], (atom("age"), Some(PhpType::parse("int"))));
+    assert_eq!(props[0], property_tag("name", Some("string")));
+    assert_eq!(props[1], property_tag("age", Some("int")));
 }
 
 #[test]
 fn property_tag_no_type() {
     let doc = "/** @property $thing */";
     let props = extract_property_tags(doc);
-    assert_eq!(props, vec![(atom("thing"), None)]);
+    assert_eq!(props, vec![property_tag("thing", None)]);
 }
 
 #[test]
@@ -271,10 +326,7 @@ fn property_tag_generic_preserved() {
     let props = extract_property_tags(doc);
     assert_eq!(
         props,
-        vec![(
-            atom("items"),
-            Some(PhpType::parse("Collection<int, Model>"))
-        )]
+        vec![property_tag("items", Some("Collection<int, Model>"))]
     );
 }
 
@@ -283,6 +335,134 @@ fn property_tag_none_when_missing() {
     let doc = "/** @return Foo */";
     let props = extract_property_tags(doc);
     assert!(props.is_empty());
+}
+
+#[test]
+fn magic_member_descriptions_are_cleaned_like_param_text() {
+    let doc = "/**
+ * @property string $label The <b>visible</b> label,
+ *   continued.
+ * @method string render() Renders <code>the</code>
+ *     post.
+ */";
+    let properties = extract_property_tags(doc);
+    assert_eq!(
+        properties[0].description.as_deref(),
+        Some("The visible label, continued.")
+    );
+    let methods = extract_method_tags(doc);
+    assert_eq!(methods[0].description.as_deref(), Some("Renders the post."));
+}
+
+#[test]
+fn vendor_property_tag_keeps_the_plain_tag_description() {
+    for doc in [
+        "/**
+ * @property array $ids The ids.
+ * @phpstan-property list<int> $ids
+ */",
+        "/**
+ * @psalm-property list<int> $ids
+ * @property array $ids The ids.
+ */",
+    ] {
+        let properties = extract_property_tags(doc);
+        assert_eq!(properties.len(), 2, "{doc}");
+        for property in &properties {
+            assert_eq!(property.description.as_deref(), Some("The ids."), "{doc}");
+        }
+    }
+    // A tag with its own text keeps it.
+    let doc = "/**
+ * @property array $ids Plain.
+ * @phpstan-property list<int> $ids Vendor.
+ */";
+    let descriptions: Vec<_> = extract_property_tags(doc)
+        .into_iter()
+        .map(|p| p.description)
+        .collect();
+    assert_eq!(
+        descriptions,
+        [Some("Plain.".to_owned()), Some("Vendor.".to_owned())]
+    );
+}
+
+#[test]
+fn vendor_method_tag_keeps_the_plain_tag_description() {
+    for doc in [
+        "/**
+ * @method array ids() The ids.
+ * @phpstan-method list<int> ids()
+ */",
+        "/**
+ * @psalm-method list<int> ids()
+ * @method ids(): array The ids.
+ */",
+    ] {
+        let methods = extract_method_tags(doc);
+        assert_eq!(methods.len(), 1, "{doc}");
+        assert_eq!(
+            methods[0].return_type,
+            Some(PhpType::parse("list<int>")),
+            "{doc}"
+        );
+        assert_eq!(methods[0].description.as_deref(), Some("The ids."), "{doc}");
+    }
+    // The winning tag's own text wins.
+    let doc = "/**
+ * @method array ids() Plain.
+ * @phpstan-method list<int> ids() Vendor.
+ */";
+    assert_eq!(
+        extract_method_tags(doc)[0].description.as_deref(),
+        Some("Vendor.")
+    );
+}
+
+#[test]
+fn property_tag_descriptions() {
+    for (tag, type_hint, description) in [
+        ("@property string $label", Some("string"), None),
+        (
+            "@property string $label The visible label.",
+            Some("string"),
+            Some("The visible label."),
+        ),
+        (
+            "@property-read string $label The visible label.",
+            Some("string"),
+            Some("The visible label."),
+        ),
+        (
+            "@property-write string $label The visible label.",
+            Some("string"),
+            Some("The visible label."),
+        ),
+        (
+            "@property $label The visible label.",
+            None,
+            Some("The visible label."),
+        ),
+        (
+            "@property string $label The visible\n * label.",
+            Some("string"),
+            Some("The visible label."),
+        ),
+    ] {
+        let properties = extract_property_tags(&format!("/**\n * {tag}\n */"));
+        assert_eq!(properties.len(), 1, "{tag}");
+        assert_eq!(properties[0].name, "label", "{tag}");
+        assert_eq!(
+            properties[0].type_hint,
+            type_hint.map(PhpType::parse),
+            "{tag}"
+        );
+        let actual = properties[0]
+            .description
+            .as_ref()
+            .map(|desc| desc.split_whitespace().collect::<Vec<_>>().join(" "));
+        assert_eq!(actual.as_deref(), description, "{tag}");
+    }
 }
 
 // ── extract_return_type (skips conditionals) ────────────────────────

@@ -991,7 +991,7 @@ pub fn extract_link_urls_from_info(info: &DocblockInfo) -> Vec<String> {
 /// and definition-list tags (`<ul>`/`<ol>`/`<li>`, `<dl>`/`<dt>`/`<dd>`)
 /// become bullet-prefixed or indented lines. Tag matching is
 /// case-insensitive. Unrecognised tags are left untouched.
-fn strip_html_tags(s: &str) -> String {
+pub(crate) fn strip_html_tags(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut chars = s.char_indices().peekable();
     while let Some((i, c)) = chars.next() {

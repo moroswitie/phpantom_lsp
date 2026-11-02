@@ -246,7 +246,7 @@ pub(crate) fn substitute_member_aliases(
             || doc
                 .properties
                 .iter()
-                .any(|(_, t)| names_any(t.as_ref(), &keys));
+                .any(|property| names_any(property.type_hint.as_ref(), &keys));
         if names_alias {
             let mut doc = doc.clone();
             for method in &mut doc.methods {
@@ -254,9 +254,9 @@ pub(crate) fn substitute_member_aliases(
                     substitute_in_method(Arc::make_mut(method), aliases);
                 }
             }
-            for (_, ty) in &mut doc.properties {
-                if names_any(ty.as_ref(), &keys) {
-                    *ty = ty.as_ref().map(|t| t.substitute(aliases));
+            for property in &mut doc.properties {
+                if names_any(property.type_hint.as_ref(), &keys) {
+                    property.type_hint = property.type_hint.as_ref().map(|t| t.substitute(aliases));
                 }
             }
             class.doc_members = Some(Arc::new(doc));

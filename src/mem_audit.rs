@@ -24,9 +24,9 @@ use crate::php_type::{
     TypeKind,
 };
 use crate::types::{
-    ClassInfo, ConstantInfo, DocblockMembers, FunctionInfo, LaravelMetadata, MethodExtras,
-    MethodInfo, ParameterInfo, PropertyInfo, PropertySource, SeeRef, SharedVec, TraitAlias,
-    TraitPrecedence, TypeAliasDef, TypeAssertion,
+    ClassInfo, ConstantInfo, DocblockMembers, DocblockProperty, FunctionInfo, LaravelMetadata,
+    MethodExtras, MethodInfo, ParameterInfo, PropertyInfo, PropertySource, SeeRef, SharedVec,
+    TraitAlias, TraitPrecedence, TypeAliasDef, TypeAssertion,
 };
 
 // ─── Counting global allocator ──────────────────────────────────────────────
@@ -865,10 +865,11 @@ impl Audit {
             let mut z = Sz::default();
             z.add(ARC + size_of::<DocblockMembers>());
             z.add(VEC_HDR + doc.methods.capacity() * size_of::<Arc<MethodInfo>>());
-            z.add(VEC_HDR + doc.properties.capacity() * size_of::<(Atom, Option<PhpType>)>());
+            z.add(VEC_HDR + doc.properties.capacity() * size_of::<DocblockProperty>());
             self.cls_docs += z;
-            for (_, t) in &doc.properties {
-                self.cls_docs += opt_ty(t);
+            for property in &doc.properties {
+                self.cls_docs += opt_ty(&property.type_hint);
+                self.cls_docs += s(&property.description);
             }
             for m in &doc.methods {
                 self.method(m);

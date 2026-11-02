@@ -1347,6 +1347,8 @@ function runDemoAssertions(): void
     assert((string) $realProperty->getType() === 'array', 'the real property declares array');
     assert((new HoverRealPropertyDemo())->demo() === ['paper'], 'the hover demo reads the real property');
 
+    assert((new HoverMagicMemberDescriptionsDemo())->demo(new Scaffolding\Zoo()) === 'gorilla-value', 'the documented magic property returns its label');
+
     // ── Switch statement type tracking ──────────────────────────────────
     $switchType = 'reviews';
     switch ($switchType) {
