@@ -200,6 +200,7 @@ mod framework_resources;
 mod hover;
 mod hover_metadata_inheritance;
 mod hover_metadata_types;
+mod hover_metadata_virtual;
 mod implementation;
 mod indexing_include;
 mod indexing_phar;
