@@ -2,6 +2,8 @@
 
 AI coding agents can use PHPantom for the same code intelligence editors get. The agent starts `phpantom_lsp` over LSP and consults it (diagnostics, go-to-definition, hover types) as it reads and edits PHP, so its changes are grounded in real type information instead of guesses.
 
+> **Fork build.** These are the docs of a fork built for AI agents, with hover on declarations turned on by default. What it adds, how to install it for Claude Code and Codex, and where it differs from these pages: [Fork build for AI agents](fork.md).
+
 ## Claude Code
 
 Install the PHPantom plugin from its marketplace:
