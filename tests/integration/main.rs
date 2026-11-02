@@ -201,6 +201,7 @@ mod hover;
 mod hover_metadata_constants;
 mod hover_metadata_docblocks;
 mod hover_metadata_inheritance;
+mod hover_metadata_scope;
 mod hover_metadata_stubs;
 mod hover_metadata_types;
 mod hover_metadata_virtual;
