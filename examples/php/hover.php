@@ -37,3 +37,19 @@ class HoverOriginsDemo extends Scaffolding\Model implements Scaffolding\Renderab
     // Overrides the abstract toArray() from Scaffolding\Model
     public function toArray(): array { return []; }
 }
+
+// ── Hover: Magic Member Descriptions ────────────────────────────────────────
+
+class HoverMagicMemberDescriptionsDemo
+{
+    public function demo(Scaffolding\Zoo $zoo): string
+    {
+        // Try: hover on `gorilla` → "The gorilla's display label."
+        $label = $zoo->gorilla;
+
+        // Try: hover on `hyena` → "Checks whether the hyena accepts a call."
+        $zoo->hyena('x');
+
+        return $label;
+    }
+}

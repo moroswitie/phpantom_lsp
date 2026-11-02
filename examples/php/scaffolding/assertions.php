@@ -1319,6 +1319,8 @@ function runDemoAssertions(): void
     assert(method_exists($hod, 'toArray'), 'HoverOriginsDemo must have toArray()');
     assert(method_exists($hod, 'getName'), 'HoverOriginsDemo must inherit getName()');
 
+    assert((new HoverMagicMemberDescriptionsDemo())->demo(new Scaffolding\Zoo()) === 'gorilla-value', 'the documented magic property returns its label');
+
     // ── Switch statement type tracking ──────────────────────────────────
     $switchType = 'reviews';
     switch ($switchType) {

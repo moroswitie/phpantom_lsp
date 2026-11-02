@@ -880,15 +880,14 @@ impl Backend {
     ) -> Option<Arc<DocblockMembers>> {
         let mut changed = false;
 
-        let properties: Vec<(Atom, Option<PhpType>)> = doc
-            .properties
-            .iter()
-            .map(|(name, ty)| {
-                let mut ty = ty.clone();
-                changed |= qualify_in_place(&mut ty, resolver);
-                (*name, ty)
-            })
-            .collect();
+        let mut properties = None;
+        for (idx, property) in doc.properties.iter().enumerate() {
+            let mut type_hint = property.type_hint.clone();
+            if qualify_in_place(&mut type_hint, resolver) {
+                properties.get_or_insert_with(|| doc.properties.clone())[idx].type_hint = type_hint;
+                changed = true;
+            }
+        }
 
         let methods: Vec<Arc<MethodInfo>> = doc
             .methods
@@ -938,7 +937,7 @@ impl Backend {
         changed.then(|| {
             Arc::new(DocblockMembers {
                 methods,
-                properties,
+                properties: properties.unwrap_or_else(|| doc.properties.clone()),
             })
         })
     }
