@@ -1349,6 +1349,12 @@ function runDemoAssertions(): void
 
     assert((new HoverMagicMemberDescriptionsDemo())->demo(new Scaffolding\Zoo()) === 'gorilla-value', 'the documented magic property returns its label');
 
+    // ── DeclarationHoverDemo (hover.php) ─────────────────────────────────
+    $declarationDemo = new DeclarationHoverDemo();
+    assert($declarationDemo->greeting() === 'hello', 'DeclarationHoverDemo::greeting() must return the string its declaration shows');
+    assert(DeclarationHoverDemo::MAX_GREETINGS === 3, 'DeclarationHoverDemo::MAX_GREETINGS must be the int 3 its declaration shows');
+    assert(DECLARATION_GREETING === 'hello', 'DECLARATION_GREETING must be the string its declaration shows');
+
     // ── Switch statement type tracking ──────────────────────────────────
     $switchType = 'reviews';
     switch ($switchType) {

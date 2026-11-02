@@ -1,7 +1,8 @@
 //! Global constant hover.
 //!
-//! The value comes from the constant lookup chain in
-//! `resolution/constants.rs`.
+//! A usage's value comes from the constant lookup chain in
+//! `resolution/constants.rs`; a declaration's from the index entry
+//! that declaration recorded.
 
 use tower_lsp_server::gen_lsp_types::Hover;
 
@@ -9,6 +10,7 @@ use crate::Backend;
 
 use super::HoverSite;
 use super::formatting::make_hover;
+use super::function::declared_global_name;
 
 impl Backend {
     /// Hover for a global constant reference: its value when known.
@@ -31,19 +33,90 @@ impl Backend {
             &ctx.namespace,
         );
 
-        // `lookup` is `Some(Some(val))` when the constant
-        // exists with a known value, `Some(None)` when it
-        // exists but the value is unknown, and `None` when
-        // the constant was not found at all.
-        match lookup {
-            Some(Some(val)) => Some(make_hover(format!(
-                "```php\n<?php\nconst {} = {};\n```",
-                name, val
-            ))),
-            Some(None) => Some(make_hover(format!("```php\n<?php\nconst {};\n```", name))),
-            None => None,
-        }
+        constant_hover(name, lookup)
     }
+
+    /// Hover for a top-level constant at its declaration site: the
+    /// value this file's declaration at this very position gives it.
+    ///
+    /// No namespace-then-global search, stub or built-in can answer
+    /// for the spelling, and neither can another declaration of the
+    /// same name (in another file, or in another branch of this one);
+    /// when the index holds another one, this declaration answers
+    /// nothing. Nor does it when a stub path declares the name in
+    /// another file: a usage resolves to the stub path's declaration
+    /// first, and loads it into the index only then, so the index alone
+    /// can still hold this one.
+    ///
+    /// A `const` name declares the constant of its namespace block
+    /// plus its stored name. A `define()` name is already the full
+    /// name it declares, wherever the call sits; the index keeps the
+    /// leading `\` of a `define('\\NAME')` that the symbol map strips,
+    /// so both spellings of that one name are tried.
+    pub(super) fn hover_constant_declaration(
+        &self,
+        site: &HoverSite,
+        symbol_start: u32,
+        name: &str,
+    ) -> Option<Hover> {
+        let define_start = define_name_start(site.content, symbol_start);
+        let declared_at = define_start.unwrap_or(symbol_start);
+        let (declared_name, value) = {
+            let defines = self.symbols.global_defines.read();
+            let declared_here = |key: &str| {
+                defines
+                    .get_key_value(key)
+                    .filter(|(_, define)| {
+                        define.file_uri == site.uri && define.name_offset == declared_at
+                    })
+                    .map(|(key, define)| (key.clone(), define.value.clone()))
+            };
+            if define_start.is_some() {
+                declared_here(name).or_else(|| declared_here(&format!("\\{name}")))
+            } else {
+                let namespace = site.ctx.namespace_at(site.offset);
+                declared_here(&declared_global_name(namespace.as_deref(), name))
+            }
+        }?;
+        if self
+            .external_stub_constant_uri(&declared_name)
+            .is_some_and(|stub_uri| stub_uri != site.uri)
+        {
+            return None;
+        }
+        constant_hover(name, Some(value))
+    }
+}
+
+/// Render a constant lookup as a hover, or `None` when the constant
+/// was not found at all.
+///
+/// `lookup` is `Some(Some(val))` when the constant exists with a
+/// known value and `Some(None)` when it exists but the value is
+/// unknown.
+fn constant_hover(name: &str, lookup: Option<Option<String>>) -> Option<Hover> {
+    match lookup {
+        Some(Some(val)) => Some(make_hover(format!(
+            "```php\n<?php\nconst {} = {};\n```",
+            name, val
+        ))),
+        Some(None) => Some(make_hover(format!("```php\n<?php\nconst {};\n```", name))),
+        None => None,
+    }
+}
+
+/// Where the string contents start when the constant span at
+/// `symbol_start` is the name argument of a `define()` call (the
+/// offset the index records a `define()` at), or `None` for a `const`
+/// name.
+///
+/// Recognised by source text: after skipping back over `\` bytes (an
+/// escaped leading backslash the extractor trimmed from the span) the
+/// text before the span ends with the string literal's opening quote.
+/// A `const` name never follows a quote.
+fn define_name_start(content: &str, symbol_start: u32) -> Option<u32> {
+    let before = content.get(..symbol_start as usize)?.trim_end_matches('\\');
+    (before.ends_with('\'') || before.ends_with('"')).then_some(before.len() as u32)
 }
 
 /// Extract the value of a constant from PHP source text.

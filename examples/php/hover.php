@@ -133,3 +133,21 @@ class HoverMagicMemberDescriptionsDemo
         return $label;
     }
 }
+
+// ── Hover: Declarations (opt-in) ────────────────────────────────────────────
+
+// Start the server with --hover-on-declarations (or pass
+// "initializationOptions": {"hover": {"declarations": true}}) for this block.
+// Without it, the hovers below answer nothing, as everywhere else.
+//
+// Try: hover on the `class` keyword below, on `DeclarationHoverDemo`, on
+// `MAX_GREETINGS`, on `greeting`, or on `DECLARATION_GREETING` — each shows
+// the same hover as hovering a use of it, instead of no hover at all.
+class DeclarationHoverDemo
+{
+    public const MAX_GREETINGS = 3;
+
+    public function greeting(): string { return 'hello'; }
+}
+
+const DECLARATION_GREETING = 'hello';

@@ -612,6 +612,15 @@ pub struct BackendState {
     /// running child process is killed promptly instead of waiting up
     /// to 60 seconds.
     pub(crate) shutdown_flag: Arc<std::sync::atomic::AtomicBool>,
+    /// Whether hover on declarations is on.
+    ///
+    /// Starts off. It is only ever raised, never lowered: the
+    /// command-line flag (or the binary's built-in default) raises it
+    /// at construction, and `initializationOptions` can raise it later
+    /// during `initialize`, since that value arrives after the
+    /// `Backend` exists. An atomic because clones share this state and
+    /// request threads read it while `initialize` may still write it.
+    pub(crate) hover_on_declarations: Arc<std::sync::atomic::AtomicBool>,
     /// How far the workspace index has got.
     pub(crate) workspace_index: backend::WorkspaceIndexState,
 }

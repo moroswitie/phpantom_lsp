@@ -198,6 +198,7 @@ mod formatting_blade;
 mod formatting_range;
 mod framework_resources;
 mod hover;
+mod hover_declarations;
 mod hover_modifiers;
 mod hover_phpdoc_descriptions;
 mod hover_property_precedence;
