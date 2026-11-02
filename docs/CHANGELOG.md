@@ -79,6 +79,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Open files keep their own declarations.** In a file with unsaved changes, hover, go-to-definition and other features could switch to the saved copy once another file used one of its classes, functions or constants, so a renamed declaration went missing or a definition landed on the wrong line. They now keep using the editor's text, and a class name declared in several namespace blocks of one file resolves to the block it names. Contributed by @moroswitie.
+- **Hover keeps PHP modifiers.** Class and member hovers show `readonly`, `final`, and `abstract` restrictions, including the class around a constructor or inherited member. Contributed by @moroswitie.
 - **A type beside its own refinement reads as one type.** After an `if` that narrowed a `string` to a `non-falsy-string`, the variable is a `string` again rather than `string|non-falsy-string`, and an intersection such as `string&'foo'` reads as `'foo'`.
 - **Bare `return;` with a `@return void|…` docblock.** A function whose docblock return type includes `void`, such as `@return void|string`, may now return without a value.
 - **WordPress output constants.** In a project with the WordPress stubs installed, `OBJECT`, `OBJECT_K`, `ARRAY_A` and `ARRAY_N` are known constants, so `get_post($id)` is a `WP_Post|null` and `get_post($id, ARRAY_A)` an array, instead of every possible result at once.
