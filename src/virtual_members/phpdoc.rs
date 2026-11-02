@@ -240,6 +240,10 @@ impl DocTags {
     /// Inherited tags are read here rather than by the inheritance merge:
     /// real trait and parent members are merged by then, but a tag exists
     /// only on the docblock that declares it.
+    ///
+    /// [`inherited_property_tags`] walks the same sources in the same
+    /// order for the tags that retype a real property; the two orders
+    /// must match.
     fn of(
         class: &ClassInfo,
         ancestors: &[(Arc<ClassInfo>, HashMap<String, PhpType>)],
@@ -351,6 +355,154 @@ impl DocTags {
                 self.add(doc, &trait_subs);
             }
         }
+    }
+}
+
+/// The `@property` tags that speak for a real property `class` has, each
+/// with its type bound the way `class` binds the tag's template
+/// parameters.
+///
+/// The PHPDoc provider turns these tags into virtual properties, which
+/// lose to a real property of the same name in the virtual-member merge.
+/// The inheritance merge reads them here instead, to retype the real
+/// property it keeps.
+///
+/// The sources are those of [`DocTags::of`] up to the interfaces, in the
+/// same order: `class`, the traits it uses, then each parent and the
+/// traits that parent uses; the two orders must match.  Interfaces are
+/// left out: their tags reach a real property later, through interface
+/// enrichment in [`resolve`](super::resolve).
+///
+/// The first source that says anything about a name decides it:
+/// - a real property of that name, declared by the source itself (for a
+///   trait, also by the traits it uses), closes the name: no tag applies,
+///   not even the same source's own;
+/// - otherwise the source's `@property` tag of that name is the one.
+///
+/// So a parent that redeclares a property shuts out its ancestors' tags,
+/// a parent's tag over its own property never reaches a child, and a
+/// nearer tag decides even when a farther one is more specific.  Like the
+/// provider, an inherited source contributes only the first tag of a
+/// name, the class's own docblock every one of them.  A tag without a
+/// type decides its name without retyping anything.
+pub(crate) fn inherited_property_tags(
+    class: &ClassInfo,
+    class_loader: &ResolvedClassLoader<'_>,
+) -> Vec<(Atom, PhpType)> {
+    if !has_property_tags(class, class_loader) {
+        return Vec::new();
+    }
+    let mut walk = PropertyTagWalk {
+        class,
+        class_loader,
+        tags: Vec::new(),
+        decided: AtomSet::default(),
+        owners: Vec::new(),
+    };
+
+    if let Some(doc) = class.doc_members.as_deref() {
+        for (name, type_hint) in &doc.properties {
+            walk.decided.insert(*name);
+            if let Some(hint) = type_hint
+                && !class.properties.iter().any(|p| p.name == *name)
+            {
+                walk.tags.push((*name, hint.clone()));
+            }
+        }
+    }
+    walk.add_traits(class, &HashMap::new());
+
+    for (parent, level_subs) in &template_bound_ancestors(class, class_loader) {
+        walk.owners.push((Arc::clone(parent), false));
+        if let Some(doc) = parent.doc_members.as_deref() {
+            walk.add(doc, level_subs);
+        }
+        walk.add_traits(parent, level_subs);
+    }
+    walk.tags
+}
+
+/// Whether `class`, a trait it uses, a parent or a trait a parent uses
+/// carries a `@property` tag: the sources [`inherited_property_tags`]
+/// reads, checked before it binds any template parameters.
+fn has_property_tags(class: &ClassInfo, class_loader: &ResolvedClassLoader<'_>) -> bool {
+    let tagged = |info: &ClassInfo| {
+        info.doc_members
+            .as_deref()
+            .is_some_and(|doc| !doc.properties.is_empty())
+    };
+    let traits_tagged = |owner: &ClassInfo| {
+        owner
+            .used_traits
+            .iter()
+            .any(|name| class_loader(Fqn::new(name)).is_some_and(|trait_info| tagged(&trait_info)))
+    };
+    tagged(class)
+        || traits_tagged(class)
+        || inheritance::ancestors(class, class_loader)
+            .any(|(_, parent)| tagged(&parent) || traits_tagged(&parent))
+}
+
+/// The state of one [`inherited_property_tags`] walk.
+struct PropertyTagWalk<'c, 'l> {
+    class: &'c ClassInfo,
+    class_loader: &'c ResolvedClassLoader<'l>,
+    tags: Vec<(Atom, PhpType)>,
+    /// The names a nearer tag already decided.
+    decided: AtomSet,
+    /// The sources visited so far after `class`, whose real properties
+    /// close a name; `true` when the source is a trait, whose own traits
+    /// declare its properties too.
+    owners: Vec<(Arc<ClassInfo>, bool)>,
+}
+
+impl PropertyTagWalk<'_, '_> {
+    /// Take the tags of `doc` whose name no nearer source decided.
+    fn add(&mut self, doc: &DocblockMembers, subs: &HashMap<String, PhpType>) {
+        for (name, type_hint) in &doc.properties {
+            if !self.decided.insert(*name) || self.declares_real(*name) {
+                continue;
+            }
+            if let Some(hint) = type_hint {
+                let hint = if subs.is_empty() {
+                    hint.clone()
+                } else {
+                    hint.substitute(subs)
+                };
+                self.tags.push((*name, hint));
+            }
+        }
+    }
+
+    /// Visit the traits `owner` uses, as [`DocTags::add_trait_tags`] does.
+    fn add_traits(&mut self, owner: &ClassInfo, owner_subs: &HashMap<String, PhpType>) {
+        for trait_name in &owner.used_traits {
+            let Some(trait_info) = (self.class_loader)(Fqn::new(trait_name)) else {
+                continue;
+            };
+            self.owners.push((Arc::clone(&trait_info), true));
+            if let Some(doc) = trait_info.doc_members.as_deref() {
+                let trait_subs = build_trait_substitution_map(owner, &trait_info, owner_subs);
+                self.add(doc, &trait_subs);
+            }
+        }
+    }
+
+    /// Whether `class` or a source visited so far declares a real
+    /// property `name`.
+    fn declares_real(&self, name: Atom) -> bool {
+        let declares = |info: &ClassInfo| info.properties.iter().any(|p| p.name == name);
+        declares(self.class)
+            || self.owners.iter().any(|(owner, is_trait)| {
+                declares(owner)
+                    || (*is_trait
+                        && inheritance::find_declaring_trait(
+                            &owner.used_traits,
+                            self.class_loader,
+                            &declares,
+                        )
+                        .is_some())
+            })
     }
 }
 

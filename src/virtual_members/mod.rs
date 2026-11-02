@@ -159,8 +159,9 @@ pub trait VirtualMemberProvider {
 /// refines the real `newQueryWithoutScopes` declaration in place.
 ///
 /// Properties are deduplicated by name.  When a property with the same
-/// name already exists, the **more specific** type wins regardless of
-/// which provider contributed it.  Specificity is ranked as:
+/// name already exists, a real declared property keeps precedence. Between
+/// virtual properties, the **more specific** type wins regardless of which
+/// provider contributed it. Specificity is ranked as:
 ///
 ///   `array<int, string>` > `array` > `mixed` > (absent)
 ///
@@ -177,9 +178,11 @@ pub trait VirtualMemberProvider {
 ///
 /// Constants are deduplicated by name only.
 ///
-/// This ensures that real declared members (and contributions from
-/// higher-priority providers that were merged earlier) are never
-/// overwritten, unless the incoming property carries a more specific type.
+/// Real declared properties are never overwritten. (A class's own tag may
+/// already have narrowed an inherited one during inheritance merging.)
+/// Higher-priority virtual properties keep precedence unless the incoming
+/// property carries a more specific type or explicitly overrides an
+/// inferred type as described above.
 pub fn merge_virtual_members(class: &mut ClassInfo, virtual_members: VirtualMembers) {
     // Build an index of (name, is_static) → position for O(1) dedup
     // instead of a linear scan per virtual method.  With hundreds of
@@ -222,6 +225,9 @@ pub fn merge_virtual_members(class: &mut ClassInfo, virtual_members: VirtualMemb
 
     for property in virtual_members.properties {
         if let Some(&idx) = prop_index.get(&property.name.to_string()) {
+            if !class.properties[idx].is_virtual {
+                continue;
+            }
             // The property already exists.  Replace it only when the
             // incoming property carries a strictly more specific type.
             // This lets PHPDoc `@property array<string> $tags` override
@@ -284,7 +290,7 @@ pub fn merge_virtual_members(class: &mut ClassInfo, virtual_members: VirtualMemb
 /// When merging virtual properties, the property with the higher
 /// specificity score wins.  Equal scores preserve the existing property
 /// (first-writer-wins within the same specificity tier).
-fn type_specificity(hint: &Option<PhpType>) -> u8 {
+pub(crate) fn type_specificity(hint: &Option<PhpType>) -> u8 {
     let Some(hint) = hint else {
         return 0;
     };
@@ -302,7 +308,7 @@ fn type_specificity(hint: &Option<PhpType>) -> u8 {
 /// The fallback ensures that properties with actual PHP type
 /// declarations (e.g. `public string $name`) are ranked higher than
 /// those without any type information, even when docblocks are absent.
-fn property_type_specificity(property: &PropertyInfo) -> u8 {
+pub(crate) fn property_type_specificity(property: &PropertyInfo) -> u8 {
     let effective_score = type_specificity(&property.type_hint);
     if effective_score > 0 {
         return effective_score;

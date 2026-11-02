@@ -762,6 +762,35 @@ fn merge_docblock_tag_does_not_override_real_property() {
 }
 
 #[test]
+fn merge_more_specific_virtual_property_keeps_the_real_declaration() {
+    for type_hint in [None, Some("mixed"), Some("array")] {
+        let original = Arc::new(PropertyInfo {
+            name_offset: 42,
+            native_type_hint: type_hint.map(PhpType::parse),
+            description: Some("The real items.".to_owned()),
+            visibility: Visibility::Private,
+            is_virtual: false,
+            ..PropertyInfo::virtual_property("items", type_hint)
+        });
+        let mut class = make_class("Inventory");
+        class.properties.push(Arc::clone(&original));
+        merge_virtual_members(
+            &mut class,
+            VirtualMembers {
+                properties: vec![PropertyInfo::virtual_property(
+                    "items",
+                    Some("list<string>"),
+                )],
+                methods: Vec::new(),
+                constants: Vec::new(),
+            },
+        );
+        assert_eq!(class.properties.len(), 1);
+        assert!(Arc::ptr_eq(&class.properties[0], &original));
+    }
+}
+
+#[test]
 fn trait_property_tag_beats_schema_column_end_to_end() {
     // Full resolution pipeline: a model whose table schema types
     // `published_at` as `string|null` but whose used trait declares

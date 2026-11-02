@@ -37,3 +37,18 @@ class HoverOriginsDemo extends Scaffolding\Model implements Scaffolding\Renderab
     // Overrides the abstract toArray() from Scaffolding\Model
     public function toArray(): array { return []; }
 }
+
+// ── Hover: Real Property Declarations ───────────────────────────────────────
+
+/** @property list<string> $items */
+class HoverRealPropertyDemo
+{
+    /** The stock kept by this class. */
+    private array $items = ['paper'];
+
+    public function demo(): array
+    {
+        // Try: hover on `items` → private array $items and its own description.
+        return $this->items;
+    }
+}

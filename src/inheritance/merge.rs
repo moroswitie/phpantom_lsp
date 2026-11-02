@@ -14,8 +14,10 @@ use crate::virtual_members::laravel::{
     ELOQUENT_MODEL_FQN, factory_model_type, has_inheritable_model_metadata, inherit_model_metadata,
     is_factory_class,
 };
+use crate::virtual_members::phpdoc::inherited_property_tags;
 use crate::virtual_members::{
     TransformFingerprint, intern_transformed_method, intern_transformed_property,
+    property_type_specificity, type_specificity,
 };
 
 use super::{
@@ -157,7 +159,7 @@ pub(crate) fn resolve_class_with_inheritance(
     // 3. Enrich methods from implemented interfaces.
     enrich_from_interfaces(class, &mut merged, class_loader);
 
-    retype_documented_properties(class, &mut merged);
+    retype_documented_properties(class, &mut merged, class_loader);
     refine_enum_cases(&mut merged);
     merged
 }
@@ -592,8 +594,19 @@ fn enrich_from_interfaces(
     }
 }
 
-/// Retype an inherited non-public property that the class documents
-/// with a `@property` tag of its own.
+/// Retype an inherited property that a `@property` tag speaks for: the
+/// class's own tag, or one on a trait it uses, a parent or a trait a
+/// parent uses. Trait properties count as inherited here: the class body
+/// does not declare them.
+///
+/// [`inherited_property_tags`] decides which tag speaks for a name: the
+/// nearest source that mentions it, where a real declaration closes the
+/// name. A property the class declares *itself* is in scope everywhere
+/// the tag is, so it keeps its own type (the tag is then a
+/// contradiction, and the real declaration is the truth). The same
+/// holds one level up: a parent's tag over the parent's own property,
+/// or a grandparent's tag over a property the parent redeclares, does
+/// not reach the child.
 ///
 /// A tag documents a magic read, and PHP only reaches `__get()` when no
 /// *accessible* property of that name exists.  An ancestor's
@@ -603,31 +616,45 @@ fn enrich_from_interfaces(
 /// `string`, not `Model::$connection`'s `\UnitEnum|string|null`. The
 /// same shadowing is routine for `$table` and `$keyType`.
 ///
-/// A property the class declares *itself* is a different matter: it is
-/// in scope everywhere the tag is, so it keeps its own type (the tag is
-/// then a contradiction, and the real declaration is the truth).
-fn retype_documented_properties(class: &ClassInfo, merged: &mut ClassInfo) {
-    let Some(doc) = class.doc_members.as_deref() else {
-        return;
-    };
-    for (name, type_hint) in &doc.properties {
-        let Some(hint) = type_hint else {
-            continue;
-        };
-        if class.properties.iter().any(|p| p.name == *name) {
-            continue;
-        }
+/// An inherited *public* property is what the read yields, so the tag
+/// does not replace its type outright, but it may narrow it: a child's
+/// `@property list<string> $items` over the parent's `public array
+/// $items` documents what this class keeps there. The tag's type is
+/// taken only when it is strictly more specific (the ranking the
+/// virtual-member merge uses, [`property_type_specificity`]).
+///
+/// A static property is never retyped: a `@property` tag documents an
+/// instance read through `__get()`, which never yields `Class::$name`.
+///
+/// Either way the property keeps its identity: visibility, native type
+/// and description stay those of the real declaration.
+///
+/// Interface tags are not read here. Interfaces are merged after the
+/// virtual members, and their tags reach a real property through
+/// interface enrichment (`virtual_members::resolve`).
+fn retype_documented_properties(
+    class: &ClassInfo,
+    merged: &mut ClassInfo,
+    class_loader: &ResolvedClassLoader<'_>,
+) {
+    for (name, hint) in inherited_property_tags(class, class_loader) {
         // Look the index up immutably so a class with nothing to
         // retype keeps sharing its property vector.
-        let Some(idx) = merged
-            .properties
-            .iter()
-            .position(|p| p.name == *name && p.visibility != Visibility::Public)
-        else {
+        let Some(idx) = merged.properties.iter().position(|p| p.name == name) else {
             continue;
         };
+        let existing = &merged.properties[idx];
+        if existing.is_static {
+            continue;
+        }
+        let type_hint = Some(hint);
+        if existing.visibility == Visibility::Public
+            && type_specificity(&type_hint) <= property_type_specificity(existing)
+        {
+            continue;
+        }
         let prop = &mut merged.properties.make_mut()[idx];
-        Arc::make_mut(prop).type_hint = Some(hint.clone());
+        Arc::make_mut(prop).type_hint = type_hint;
     }
 }
 
