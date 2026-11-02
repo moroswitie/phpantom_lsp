@@ -21,7 +21,7 @@ use tower_lsp_server::{LspService, Server};
 /// it on. Upstream this is off; a fork that wants the feature by
 /// default changes only this constant (and the flag's help text).
 #[cfg(not(target_arch = "wasm32"))]
-const DEFAULT_HOVER_ON_DECLARATIONS: bool = false;
+const DEFAULT_HOVER_ON_DECLARATIONS: bool = true;
 
 const STYLES: Styles = Styles::styled()
     .header(AnsiColor::Yellow.on_default().bold())
@@ -54,11 +54,12 @@ struct Cli {
     #[arg(long, value_name = "ADDR")]
     tcp: Option<String>,
 
-    /// Show hover on declarations.
+    /// Show hover on declarations (on by default in this fork).
     ///
-    /// Declaration sites answer no hover by default. This turns
-    /// declaration hover on, for clients that navigate to
-    /// declarations rather than usages. The same setting can be
+    /// This fork turns declaration hover on by default, for clients
+    /// that navigate to declarations rather than usages, so the flag
+    /// changes nothing here. Upstream builds keep it off unless the
+    /// flag or initializationOptions turns it on. The same setting can be
     /// given per session as the hover.declarations key in
     /// initializationOptions. It cannot be combined with a
     /// subcommand.
@@ -699,10 +700,7 @@ mod tests {
         assert!(!cli.hover_on_declarations);
         assert!(cli.command.is_none());
         assert!(!hover_flag_with_subcommand(&cli));
-        assert_eq!(
-            hover_on_declarations_setting(cli.hover_on_declarations),
-            DEFAULT_HOVER_ON_DECLARATIONS
-        );
+        assert!(hover_on_declarations_setting(cli.hover_on_declarations));
     }
 
     #[test]
