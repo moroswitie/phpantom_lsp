@@ -222,8 +222,9 @@ impl Backend {
     /// `class_name` must already be normalised (no `?` prefix, no
     /// generic parameters).
     fn find_or_load_class_inner(&self, class_name: &str) -> Option<Arc<ClassInfo>> {
-        // The class name stored in ClassInfo is just the short name (e.g. "Customer"),
-        // so we match against the last segment of the namespace-qualified name.
+        // A class a file is parsed for is picked by its full name: one file
+        // can declare the same short name in several namespace blocks, and
+        // an open buffer may have moved the class to another namespace.
         let last_segment = short_name(class_name);
 
         // ── Short-circuit: scalar/built-in type keywords are never classes ──
@@ -243,6 +244,10 @@ impl Backend {
         } else {
             None
         };
+
+        // Read before the negative cache, so a clear of it from here on
+        // keeps this lookup's miss out of it.
+        let miss_generation = self.symbols.class_miss_generation();
 
         // ── Negative cache: skip the full multi-phase search ──
         if self
@@ -271,7 +276,7 @@ impl Backend {
             if let Some(uri) = indexed
                 && !scope.sees(&uri)
             {
-                return self.find_project_copy(class_name, last_segment, scope);
+                return self.find_project_copy(class_name, scope);
             }
         }
 
@@ -317,7 +322,7 @@ impl Backend {
             && let Some(classes) = self.parse_and_cache_uri(&file_uri)
             && let Some(cls) = classes
                 .iter()
-                .find(|c| c.name.eq_ignore_ascii_case(last_segment))
+                .find(|c| c.fqn().eq_ignore_ascii_case(class_name))
         {
             return Some(Arc::clone(cls));
         }
@@ -348,7 +353,7 @@ impl Backend {
                 && let Some(classes) = self.parse_and_cache_file(&file_path)
                 && let Some(cls) = classes
                     .iter()
-                    .find(|c| c.name.eq_ignore_ascii_case(last_segment))
+                    .find(|c| c.fqn().eq_ignore_ascii_case(class_name))
             {
                 return Some(Arc::clone(cls));
             }
@@ -369,23 +374,26 @@ impl Backend {
         }
 
         // Cache the negative result so subsequent lookups for the same
-        // unknown class skip the expensive multi-phase search.
-        self.symbols
-            .class_not_found_cache
-            .write()
-            .insert(class_name);
+        // unknown class skip the expensive multi-phase search.  Another
+        // thread may have published the class since Phase 0, an open
+        // buffer's edit for one, so re-check under the write lock: a
+        // publish inserts into `fqn_class_index` before it retires
+        // negatives, so either the class is visible here or its retirement
+        // runs after us.  This lookup still misses then; the next one finds
+        // the class.
+        let mut nf_cache = self.symbols.class_not_found_cache.write();
+        if self.find_class_in_uri_classes_index(class_name).is_none()
+            && self.symbols.class_miss_generation() == miss_generation
+        {
+            nf_cache.insert(class_name);
+        }
         None
     }
 
     /// The declaration of `class_name` that `scope` sees, other than the
     /// one the index holds: one in the project's own vendor directory
     /// first, else one outside every vendor directory.
-    fn find_project_copy(
-        &self,
-        class_name: &str,
-        last_segment: &str,
-        scope: &ProjectScope,
-    ) -> Option<Arc<ClassInfo>> {
+    fn find_project_copy(&self, class_name: &str, scope: &ProjectScope) -> Option<Arc<ClassInfo>> {
         for uri in scope.visible_alternates(self.symbols.alternate_class_uris(class_name)) {
             let parsed = self
                 .symbols
@@ -399,7 +407,7 @@ impl Backend {
             if let Some(classes) = self.parse_and_cache_uri(&uri)
                 && let Some(cls) = classes
                     .iter()
-                    .find(|c| c.name.eq_ignore_ascii_case(last_segment))
+                    .find(|c| c.fqn().eq_ignore_ascii_case(class_name))
             {
                 return Some(Arc::clone(cls));
             }
@@ -416,8 +424,8 @@ impl Backend {
     /// [`class_loader_memo`](crate::class_loader_memo), which would
     /// otherwise keep answering from the negatives just cleared.
     pub(crate) fn clear_not_found_caches(&self) {
-        self.symbols.class_not_found_cache.write().clear();
-        self.symbols.function_not_found_cache.write().clear();
+        self.symbols.retire_class_misses();
+        self.symbols.retire_function_misses();
         self.symbols.note_class_lookup_change();
     }
 }

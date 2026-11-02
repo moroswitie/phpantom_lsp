@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tower_lsp_server::gen_lsp_types::*;
 
 use crate::Backend;
+use crate::backend::file_access::FileText;
 use crate::server::{run_blocking_cancel_safe, spawn_blocking_detached};
 
 impl Backend {
@@ -41,7 +42,7 @@ impl Backend {
         }
 
         // Parse and update AST map, use map, and namespace map
-        self.update_ast(&uri, &text);
+        self.update_ast_buffer(&uri, &text);
 
         // Opening a Blade template is the discrete point where its
         // call-site variable inference runs (update_ast itself only
@@ -49,12 +50,12 @@ impl Backend {
         // resolves passed-expression types in caller files, which can
         // lazily parse other files.
         if self.is_blade_file(&uri) {
+            let content = FileText::Buffer(Arc::clone(&text));
             if self.sync_ast_updates {
-                self.reinfer_blade_and_its_renders(&uri, &text);
+                self.reinfer_blade_and_its_renders(&uri, &content);
             } else {
                 let backend = self.clone_for_blocking();
                 let blade_uri = uri.clone();
-                let content = Arc::clone(&text);
                 spawn_blocking_detached("did_open blade inference", move || {
                     backend.reinfer_blade_and_its_renders(&blade_uri, &content);
                 });
@@ -178,7 +179,7 @@ impl Backend {
         // keystroke; `update_ast` already tolerates stale maps when
         // incomplete code cannot be parsed.
         if self.sync_ast_updates {
-            self.update_ast(&uri, &text);
+            self.update_ast_buffer(&uri, &text);
             self.schedule_diagnostics(uri.clone());
         } else {
             let backend = self.clone_for_blocking();
@@ -205,7 +206,7 @@ impl Backend {
                     }
 
                     let started = std::time::Instant::now();
-                    backend.update_ast(&uri, &text);
+                    backend.update_ast_buffer(&uri, &text);
                     let elapsed = started.elapsed();
                     if elapsed >= std::time::Duration::from_millis(100) {
                         tracing::debug!(
@@ -260,7 +261,7 @@ impl Backend {
             let reparse =
                 move |backend: &Backend, uri: &str| match crate::util::read_php_source(&path) {
                     Some(content) => {
-                        backend.update_ast(uri, &content);
+                        backend.update_ast_from_disk(uri, &content);
                     }
                     None => backend.forget_closed_file(uri),
                 };
@@ -304,7 +305,7 @@ impl Backend {
             if is_resource {
                 self.update_resource_symbol_index(&uri, &text);
             } else {
-                self.update_ast(&uri, &text);
+                self.update_ast_buffer(&uri, &text);
             }
         }
 

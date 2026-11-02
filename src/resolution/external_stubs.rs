@@ -112,7 +112,7 @@ impl Backend {
         };
         if !parsed() {
             let content = crate::util::read_php_source(path)?;
-            self.update_ast(&uri, &content);
+            self.update_ast_from_disk(&uri, &content);
         }
         Some(uri)
     }

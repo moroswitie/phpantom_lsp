@@ -60,7 +60,7 @@ impl Backend {
             let path = pending[i];
             if let Some(content) = crate::util::read_php_source(path) {
                 let uri = crate::util::path_to_uri(path);
-                self.update_ast(&uri, &content);
+                self.update_ast_from_disk(&uri, &content);
             }
             if let Some(p) = progress {
                 p.add_done(1);

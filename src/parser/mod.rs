@@ -19,6 +19,8 @@
 //! - [`file_declarations`]: The top-level walk for a file's class-likes,
 //!   imports, namespace blocks and functions
 //! - [`ast_publish`]: Publishing a batch of parsed files to the indexes
+//! - [`publication_order`]: Ordering a file's buffer and disk publications
+//!   so that neither lands over a newer one
 //! - [`name_resolution`]: Qualifying the names a parsed declaration spells
 //! - [`initializers`]: Qualifying the classes a constant initializer names
 //! - [`parse_cache`]: The thread-local cache that shares one parse per pass
@@ -47,6 +49,7 @@ mod name_resolution;
 mod namespace_recovery;
 mod params;
 mod parse_cache;
+mod publication_order;
 mod recovery;
 mod signature;
 mod stub_attributes;
@@ -55,6 +58,7 @@ mod use_statements;
 pub(crate) use ast_helpers::*;
 pub(crate) use params::*;
 pub(crate) use parse_cache::*;
+pub(crate) use publication_order::PublicationOrder;
 pub(crate) use stub_attributes::*;
 
 use crate::atom::{atom, bytes_to_str};
