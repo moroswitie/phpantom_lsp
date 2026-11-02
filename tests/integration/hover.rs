@@ -4316,6 +4316,35 @@ class Processor {
     );
 }
 
+#[test]
+fn hover_param_description_survives_a_vendor_tag_without_text() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let content = r#"<?php
+class Processor {
+    /**
+     * @param array $ids The IDs to process.
+     * @phpstan-param list<int> $ids
+     */
+    public function __construct(array $ids) {}
+    /**
+     * @param array $ids The IDs to process.
+     * @psalm-param list<int> $ids
+     */
+    public function process(array $ids): void {}
+}
+$p = new Processor([]);
+$p->process([]);
+"#;
+    let constructor = hover_at(&backend, uri, content, 13, 12).expect("expected hover on new");
+    let text = hover_text(&constructor);
+    assert!(text.contains("The IDs to process."), "constructor: {text}");
+    let method = hover_at(&backend, uri, content, 14, 6).expect("expected hover on process");
+    let text = hover_text(&method);
+    assert!(text.contains("**$ids** `list<int>`"), "method: {text}");
+    assert!(text.contains("The IDs to process."), "method: {text}");
+}
+
 // ─── @param suppression tests ───────────────────────────────────────────────
 
 #[test]
