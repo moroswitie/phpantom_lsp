@@ -102,3 +102,18 @@ class HoverPromotedDescriptionsDemo
         echo $this->both;
     }
 }
+
+// ── Hover: Real Property Declarations ───────────────────────────────────────
+
+/** @property list<string> $items */
+class HoverRealPropertyDemo
+{
+    /** The stock kept by this class. */
+    private array $items = ['paper'];
+
+    public function demo(): array
+    {
+        // Try: hover on `items` → private array $items and its own description.
+        return $this->items;
+    }
+}

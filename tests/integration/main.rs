@@ -199,6 +199,7 @@ mod formatting_range;
 mod framework_resources;
 mod hover;
 mod hover_modifiers;
+mod hover_property_precedence;
 mod implementation;
 mod indexing_include;
 mod indexing_open_files;
