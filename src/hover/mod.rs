@@ -40,7 +40,7 @@ use laravel::hover_command_own_param;
 
 // Re-export `pub(crate)` items so external callers keep using `crate::hover::`.
 pub(crate) use formatting::{
-    extract_description_from_info, extract_var_description_from_info, hover_for_function,
+    extract_description_from_info, extract_property_description_from_info, hover_for_function,
     shorten_php_type,
 };
 pub(crate) use member::{MemberKindForOrigin, find_declaring_class};
