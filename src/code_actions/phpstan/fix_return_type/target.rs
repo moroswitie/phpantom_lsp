@@ -107,7 +107,7 @@ impl TargetFunction {
                 .return_type_hint()
                 .map(|return_type| (return_type.colon, return_type.hint.span())),
             body_end: function.body().map(|block| block.right_brace.start.offset),
-            docblock: FunctionDocblock::of(program, content, span),
+            docblock: FunctionDocblock::of(program, content, function),
             statement: found.map(|found| ReturnStatement {
                 start: found.statement.r#return.span.start.offset,
                 end: match found.statement.terminator {

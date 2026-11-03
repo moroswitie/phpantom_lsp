@@ -702,7 +702,7 @@ pub(super) fn extract_from_method<'a>(method: &'a Method<'a>, ctx: &mut Extracti
 /// Unlike class/method docblocks, inline `@var` annotations don't define
 /// template parameters — we only care about the type spans they contain.
 pub(super) fn extract_inline_docblock(
-    node: &impl HasSpan,
+    node: &impl crate::symbol_map::docblock::Documented,
     ctx: &mut ExtractionCtx<'_>,
     scope_start: u32,
 ) {

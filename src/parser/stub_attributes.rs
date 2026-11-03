@@ -111,7 +111,7 @@ pub(crate) fn is_available_for_version(
 /// Returns `false` when there is no `@removed` tag or the target
 /// version is older than the removal version.
 pub(crate) fn is_removed_for_version(
-    node: &impl HasSpan,
+    node: &impl crate::symbol_map::docblock::Documented,
     ctx: &DocblockCtx<'_>,
     php_version: PhpVersion,
 ) -> bool {

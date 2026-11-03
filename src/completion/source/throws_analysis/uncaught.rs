@@ -180,23 +180,32 @@ struct DocumentedFunction<'a, 'ast, 'arena> {
 impl<'ast, 'arena> DocumentedFunction<'_, 'ast, 'arena> {
     /// Take `node` when the code at `offset` documents it: `offset` is in
     /// the docblock right above it, or only whitespace lies between them.
-    fn consider(&mut self, node: &impl HasSpan, body: Option<&'ast Block<'arena>>) {
+    fn consider(
+        &mut self,
+        node: &impl crate::symbol_map::docblock::Documented,
+        body: Option<&'ast Block<'arena>>,
+    ) {
         if self.body.is_some() {
             return;
         }
         let start = node.span().start.offset;
-        if start < self.offset {
-            return;
-        }
         let documents = match crate::symbol_map::docblock::get_docblock_text_with_offset(
             self.trivia,
             self.content,
             node,
         ) {
-            Some((_, docblock_start)) => docblock_start <= self.offset,
-            None => self.content[self.offset as usize..start as usize]
-                .trim()
-                .is_empty(),
+            // A docblock after the attributes lies inside the node's span,
+            // so the docblock's own end bounds the region then.
+            Some((text, docblock_start)) => {
+                let docblock_end = docblock_start + text.len() as u32;
+                docblock_start <= self.offset && self.offset <= start.max(docblock_end)
+            }
+            None => {
+                start >= self.offset
+                    && self.content[self.offset as usize..start as usize]
+                        .trim()
+                        .is_empty()
+            }
         };
         if documents {
             self.body = Some(body);

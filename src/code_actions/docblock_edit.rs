@@ -16,7 +16,7 @@ use mago_span::HasSpan;
 use mago_syntax::cst::{Class, Program};
 use tower_lsp_server::gen_lsp_types::TextEdit;
 
-use crate::code_actions::cursor_context::{FunctionKinds, find_enclosing_function};
+use crate::code_actions::cursor_context::{FunctionKinds, FunctionLike, find_enclosing_function};
 use crate::docblock::strip_docblock_line_delimiters;
 use crate::docblock::type_strings::split_type_token;
 use crate::php_type::PhpType;
@@ -323,13 +323,18 @@ impl DocblockPlacement {
     }
 }
 
-/// The `/** … */` block the parser attaches to `decl`: the one preceding its
-/// first attribute, modifier or keyword with nothing but whitespace and
-/// comments in between.
+/// The `/** … */` block the parser attaches to `decl`, by the one rule in
+/// [`get_docblock_text_with_offset`](crate::symbol_map::docblock::get_docblock_text_with_offset):
+/// the nearest one before its first modifier or keyword, attributes,
+/// whitespace and other comments skipped.
 ///
 /// A block that shares a line with code is not one an edit can rewrite
 /// line by line, so the declaration counts as having none.
-fn docblock_of(program: &Program<'_>, content: &str, decl: &impl HasSpan) -> Option<DocblockAbove> {
+fn docblock_of(
+    program: &Program<'_>,
+    content: &str,
+    decl: &impl crate::symbol_map::docblock::Documented,
+) -> Option<DocblockAbove> {
     crate::symbol_map::docblock::get_docblock_text_with_offset(
         program.trivia.as_slice(),
         content,
@@ -374,12 +379,12 @@ pub(crate) struct FunctionDocblock {
 }
 
 impl FunctionDocblock {
-    /// The docblock of the function-like declaration spanning `decl`, read
-    /// from the `program` parsed from `content`.
-    pub(crate) fn of(program: &Program<'_>, content: &str, decl: mago_span::Span) -> Self {
+    /// The docblock of the function-like declaration `decl`, read from the
+    /// `program` parsed from `content`.
+    pub(crate) fn of(program: &Program<'_>, content: &str, decl: FunctionLike<'_, '_>) -> Self {
         Self {
             docblock: docblock_of(program, content, &decl),
-            placement: DocblockPlacement::above(content, decl.start.offset as usize),
+            placement: DocblockPlacement::above(content, decl.span().start.offset as usize),
         }
     }
 
@@ -471,7 +476,7 @@ fn function_docblock_at(
     kinds: FunctionKinds,
 ) -> Option<FunctionDocblock> {
     crate::parser::with_parsed_program(content, "function_docblock_at", |program, content| {
-        let decl = find_enclosing_function(program, offset as u32, kinds)?.span();
+        let decl = find_enclosing_function(program, offset as u32, kinds)?;
         Some(FunctionDocblock::of(program, content, decl))
     })
 }

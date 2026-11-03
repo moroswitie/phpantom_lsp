@@ -20,6 +20,7 @@
 //! [`symfony_receiver_method`]).
 
 use super::*;
+use crate::symbol_map::docblock::Documented;
 use crate::symbol_map::{
     ContainerValue, ContainerValueSite, KeyFramework, MessengerHandlerSite, ReceiverClass,
     RouteImport, SYMFONY_CONTAINER_CONFIGURATOR_NS, SYMFONY_ROUTING_CONFIGURATOR, StringKeyKind,
@@ -1634,9 +1635,9 @@ fn uses_route_annotations(ctx: &mut ExtractionCtx<'_>) -> bool {
     })
 }
 
-/// The docblock of the declaration at `span`, and where it starts.
-fn route_docblock<'a>(span: mago_span::Span, ctx: &ExtractionCtx<'a>) -> Option<(&'a str, u32)> {
-    get_docblock_text_with_offset(ctx.trivias, ctx.content, &span)
+/// The docblock of the declaration `node`, and where it starts.
+fn route_docblock<'a>(node: &impl Documented, ctx: &ExtractionCtx<'a>) -> Option<(&'a str, u32)> {
+    get_docblock_text_with_offset(ctx.trivias, ctx.content, node)
 }
 
 /// What one argument of an annotation is: a string, by the byte range of
@@ -1848,7 +1849,7 @@ pub(in crate::symbol_map::extraction) fn emit_symfony_route_spans(
     }
     let annotations = uses_route_annotations(ctx);
     let class_doc = if annotations {
-        route_docblock(class.span(), ctx)
+        route_docblock(class, ctx)
     } else {
         None
     };
@@ -1890,7 +1891,7 @@ pub(in crate::symbol_map::extraction) fn emit_symfony_route_spans(
             invoke = Some(method_name);
         }
         let method_doc = if annotations {
-            route_docblock(method.span(), ctx)
+            route_docblock(method, ctx)
         } else {
             None
         };

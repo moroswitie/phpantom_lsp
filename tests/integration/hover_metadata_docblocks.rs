@@ -299,7 +299,6 @@ fn issue_23_explicit_param_tag_types_the_child_body() {
 ///
 /// Spec: ATTR-002, PAR-012, COMB-002.
 #[test]
-#[ignore = "issue 17: a docblock after an attribute is ignored on a promoted parameter"]
 fn issue_17_promoted_parameter_docblock_after_attribute() {
     assert_member_hover(
         B1_PROMOTED_AFTER_ATTRIBUTE,
@@ -314,7 +313,6 @@ fn issue_17_promoted_parameter_docblock_after_attribute() {
 ///
 /// Spec: ATTR-002, PROP-012.
 #[test]
-#[ignore = "issue 17: a docblock after an attribute is ignored on a property"]
 fn issue_17_property_docblock_after_attribute() {
     assert_member_hover(
         B2_ATTRIBUTE_THEN_DOCBLOCK,
@@ -329,7 +327,6 @@ fn issue_17_property_docblock_after_attribute() {
 ///
 /// Spec: ATTR-002.
 #[test]
-#[ignore = "issue 17: a docblock after an attribute is ignored on a method"]
 fn issue_17_method_docblock_after_attribute() {
     assert_member_hover(
         B2_ATTRIBUTE_THEN_DOCBLOCK,
@@ -346,7 +343,6 @@ fn issue_17_method_docblock_after_attribute() {
 ///
 /// Spec: ATTR-003.
 #[test]
-#[ignore = "issue 17: the docblock before the attribute is taken instead of the one after it"]
 fn attr_003_the_docblock_after_the_attribute_wins() {
     assert_member_hover(
         E2_ATTR_INTERLEAVED_STACKED,
@@ -361,7 +357,6 @@ fn attr_003_the_docblock_after_the_attribute_wins() {
 ///
 /// Spec: ATTR-004.
 #[test]
-#[ignore = "issue 17: a docblock after stacked attribute groups is ignored"]
 fn attr_004_docblock_after_stacked_attribute_groups() {
     assert_member_hover(
         E2_ATTR_INTERLEAVED_STACKED,

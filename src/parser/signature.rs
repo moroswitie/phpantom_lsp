@@ -5,7 +5,6 @@
 //! `#[LanguageLevelTypeAware]` and `#[ArrayShape]` can refine, and a
 //! docblock with `@return`, conditional return and `@template` tags.
 
-use mago_span::HasSpan;
 use mago_syntax::cst::*;
 
 use crate::atom::{Atom, AtomMap, atom};
@@ -49,7 +48,7 @@ pub(super) struct Signature {
 /// templates (empty for a standalone function), which `@return` naming one
 /// of them is judged by against the native return hint.
 pub(super) fn extract_signature<'a>(
-    node: &impl HasSpan,
+    node: &impl crate::symbol_map::docblock::Documented,
     attribute_lists: &Sequence<'_, attribute::AttributeList<'_>>,
     parameter_list: &FunctionLikeParameterList<'_>,
     return_type_hint: Option<&FunctionLikeReturnTypeHint<'_>>,

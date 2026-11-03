@@ -19,7 +19,6 @@ mod members;
 mod methods;
 mod properties;
 
-use mago_span::HasSpan;
 use mago_syntax::cst::*;
 
 use crate::Backend;
@@ -164,7 +163,10 @@ impl Backend {
 
 /// Whether `node`'s docblock has `@removed X.Y` with X.Y at or below the
 /// target PHP version, which drops the declaration.
-fn removed_in_target_version(node: &impl HasSpan, doc_ctx: Option<&DocblockCtx<'_>>) -> bool {
+fn removed_in_target_version(
+    node: &impl crate::symbol_map::docblock::Documented,
+    doc_ctx: Option<&DocblockCtx<'_>>,
+) -> bool {
     doc_ctx.is_some_and(|ctx| {
         ctx.php_version
             .is_some_and(|ver| is_removed_for_version(node, ctx, ver))

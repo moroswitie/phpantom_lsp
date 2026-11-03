@@ -16,11 +16,10 @@
 use std::borrow::Cow;
 
 use super::tag_kind::TagKind;
-use mago_span::HasSpan;
 use mago_syntax::cst::*;
 
 use crate::atom::atom;
-use crate::symbol_map::docblock::get_docblock_text_with_offset;
+use crate::symbol_map::docblock::{Documented, get_docblock_text_with_offset};
 use crate::types::{
     AssertionKind, CallableInvocation, DocReadonly, ParameterInfo, PhpVersion, TypeAssertion,
 };
@@ -1103,17 +1102,18 @@ pub(crate) fn strip_html_tags(s: &str) -> String {
 
 // ─── Docblock Text Extraction ───────────────────────────────────────────────
 
-/// Look up the docblock comment (if any) for a class-like member and return
+/// Look up the docblock comment (if any) that documents `node` and return
 /// its raw text.
 ///
-/// This uses the program's trivia list to find the `/** ... */` comment that
-/// immediately precedes the given AST node.  The `content` parameter is the
-/// full source text and is used to verify there is no code between the
-/// docblock and the node.
+/// The association rule (attributes skipped, the nearest `/** ... */`
+/// wins) lives in
+/// [`get_docblock_text_with_offset`](crate::symbol_map::docblock::get_docblock_text_with_offset).
+/// The `content` parameter is the full source text and is used to verify
+/// there is no code between the docblock and the node.
 pub fn get_docblock_text_for_node<'a>(
     trivia: &'a [Trivia<'a>],
     content: &str,
-    node: &impl HasSpan,
+    node: &impl Documented,
 ) -> Option<&'a str> {
     get_docblock_text_with_offset(trivia, content, node).map(|(text, _)| text)
 }
@@ -1128,7 +1128,7 @@ pub fn get_docblock_text_for_node<'a>(
 pub fn get_docblock_info_for_node(
     trivia: &[Trivia<'_>],
     content: &str,
-    node: &impl HasSpan,
+    node: &impl Documented,
 ) -> Option<DocblockInfo> {
     let text = get_docblock_text_for_node(trivia, content, node)?;
     parse_docblock_for_tags(text)

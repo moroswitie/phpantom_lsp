@@ -150,7 +150,7 @@ fn walk_members(members: &[ClassLikeMember<'_>], ctx: &Ctx<'_>, out: &mut Vec<Fi
 /// Compare every annotated parameter and the return type of one declaration
 /// against the docblock immediately above it.
 fn check_declaration(
-    node: &impl HasSpan,
+    node: &impl crate::symbol_map::docblock::Documented,
     parameters: &FunctionLikeParameterList<'_>,
     return_type_hint: Option<&FunctionLikeReturnTypeHint<'_>>,
     ctx: &Ctx<'_>,
