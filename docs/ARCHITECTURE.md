@@ -834,6 +834,57 @@ User code is never filtered. The `php_version` field in `DocblockCtx` is `None` 
 
 If the stubs can't be fetched (e.g. no network access during the build), `build.rs` generates empty arrays and the build succeeds. The LSP just won't know about built-in PHP symbols.
 
+## Single Owners
+
+Some decisions used to be made in many places, each with its own rule and
+from data that had already lost the facts needed to decide. Each now has
+one owner, and a guard that fails when a second place appears: the
+compiler where it can (a private field, a required parameter, a trait
+bound), otherwise a rule in `tests/integration/architecture_rules.rs`,
+which reads `src/` with plain string matching.
+
+### Extraction keeps every fact
+
+After parsing, a record states what the source says, so no later code has
+to guess it.
+
+- **Which docblock belongs to a declaration.** The owner is
+  `get_docblock_text_with_offset` (`src/symbol_map/docblock.rs`); every
+  other lookup (`get_docblock_text_for_node`, `get_docblock_info_for_node`)
+  goes through it. It follows PHP's rule: the nearest doc comment before
+  the declaration's first token after its attributes, with attribute
+  lists, whitespace and other comments in between skipped. A Mago node's
+  span starts at its first attribute, so the lookup takes a `Documented`
+  node (a `HasSpan` that also lists its attribute lists) instead of a bare
+  span. Guard: the trait bound; a span alone does not compile.
+- **Whether a PHPDoc type was written.** `ParameterInfo::doc_type`,
+  `PropertyInfo::doc_type`, `MethodInfo::doc_return_type` and
+  `FunctionInfo::doc_return_type` hold the PHPDoc type that applies to the
+  declaration: written on it (`@param`, `@var`, `@return`, a promoted
+  parameter's `@var`, a `@property` / `@method` tag, a refining
+  `#[ArrayShape]`) or inherited with the type. `resolve_effective_type_typed`
+  and `resolve_effective_type_with_template_bounds`
+  (`src/docblock/type_override.rs`) return `TypeFacts { effective, doc }`,
+  so a caller cannot keep the effective type and drop the fact. The field
+  holds the type as written; template substitution, alias expansion and
+  name qualification rewrite only the effective type. Inheritance
+  (`src/inheritance/enrichment.rs`) reads "the child wrote none" as
+  `doc_type.is_none()` and copies the ancestor's doc type with its type;
+  the nearest ancestor is visited first, so the nearest documented one
+  wins. A written tag is also the element whose own (possibly empty) text
+  wins over the ancestor's. Guard: rule `no_doc_type_guessing` (the old
+  `effective == native` helpers never return).
+- **Whether a call is a `define()` declaration.** The owner is
+  `src/parser/define_call.rs`: `define_call` recognises one call (callee
+  `define` in any case, with or without one leading backslash, a non-empty
+  string-literal name whose offset is the first byte inside the quotes),
+  and `for_each_define_call` finds the calls of an expression statement,
+  inside `or`, `||`, `and`, `&&`, ternary branches and parentheses. The
+  constant index (`extract_defines_from_statements`) and the symbol map
+  (`extract_function_call`) both use it, so they agree by construction.
+  The byte-level prefilter in `classmap_scanner/lexer.rs` stays separate
+  and accepts a superset (any case, whitespace before the `(`).
+
 ## Inheritance Resolution
 
 When building completion items or resolving definitions, PHPantom merges members from the full inheritance chain. Resolution proceeds in two phases:

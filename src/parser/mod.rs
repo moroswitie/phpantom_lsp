@@ -41,6 +41,7 @@ mod ast_update;
 mod attributes;
 mod bracket_recovery;
 mod classes;
+pub(crate) mod define_call;
 pub(crate) mod error_format;
 mod file_declarations;
 mod functions;

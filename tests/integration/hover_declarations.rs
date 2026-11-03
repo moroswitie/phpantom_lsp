@@ -565,6 +565,44 @@ fn define_declaration_shows_the_constant_hover() {
     assert_off_on_token(content, "'LIMIT'", "LIMIT", &["const LIMIT = 5;"]);
 }
 
+/// Every form the one `define()` recogniser accepts (D-14) is a declaration
+/// the index holds, so each one hovers: a `defined() or` guard (issue 6), a
+/// fully qualified and an upper-case callee (issue 8), and a ternary.
+#[test]
+fn every_define_form_shows_the_constant_hover() {
+    for (content, token, expected) in [
+        (
+            "<?php\ndefined('ORX') or define('ORX', 5);\n",
+            "ORX",
+            "const ORX = 5;",
+        ),
+        (
+            "<?php\n!defined('ANDX') && define('ANDX', 6);\n",
+            "ANDX",
+            "const ANDX = 6;",
+        ),
+        (
+            "<?php\nnamespace App;\n\\define('GLOBAL_NAME', 20);\n",
+            "GLOBAL_NAME",
+            "const GLOBAL_NAME = 20;",
+        ),
+        ("<?php\nDEFINE('UPPER', 7);\n", "UPPER", "const UPPER = 7;"),
+        (
+            "<?php\n$fast ? define('MODE', 1) : null;\n",
+            "MODE",
+            "const MODE = 1;",
+        ),
+    ] {
+        // The declaration's own name, not the `defined('…')` use before it.
+        let call = if content.contains("DEFINE(") {
+            format!("DEFINE('{token}'")
+        } else {
+            format!("define('{token}'")
+        };
+        assert_off_on_token(content, &call, token, &[expected]);
+    }
+}
+
 // ─── Still suppressed with the switch on ────────────────────────────
 
 #[test]

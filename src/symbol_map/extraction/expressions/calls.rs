@@ -334,7 +334,7 @@ fn extract_function_call<'a>(
                     &mut ctx.spans,
                 );
             }
-            if name_clean.eq_ignore_ascii_case("define") {
+            if crate::parser::define_call::define_call(func_call).is_some() {
                 try_emit_constant_name_span(
                     &func_call.argument_list,
                     ctx.content,

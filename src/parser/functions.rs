@@ -404,11 +404,15 @@ impl Backend {
                             .is_some_and(|ver| is_removed_for_version(statement, ctx, ver))
                     }) => {}
                 Statement::Expression(expr_stmt) => {
-                    if let Some(entry) =
-                        Self::try_extract_define_info(expr_stmt.expression, content)
-                    {
-                        defines.push(entry);
-                    }
+                    super::define_call::for_each_define_call(expr_stmt.expression, &mut |define| {
+                        defines.push((
+                            define.name.to_string(),
+                            define.name_offset,
+                            define
+                                .value
+                                .and_then(|value| super::define_call::source_text(value, content)),
+                        ));
+                    });
                 }
                 // Handle namespace-level const declarations
                 Statement::Constant(const_decl) => {
@@ -481,54 +485,5 @@ impl Backend {
                 _ => {}
             }
         }
-    }
-
-    /// Try to extract the constant name, byte offset, and value from a
-    /// `define('NAME', value)` call expression.  Returns
-    /// `Some((name, name_offset, value_text))` if the expression is a
-    /// function call to `define` whose first argument is a string literal.
-    ///
-    /// The offset points at the name inside the quotes, the way a `const`
-    /// declaration's points at its identifier, so go-to-definition and the
-    /// symbol outlines land on the name rather than on `define`.
-    fn try_extract_define_info(
-        expr: &Expression<'_>,
-        content: &str,
-    ) -> Option<(String, u32, Option<String>)> {
-        if let Expression::Call(Call::Function(func_call)) = expr {
-            let ident = match func_call.function {
-                Expression::Identifier(ident) => ident,
-                _ => return None,
-            };
-            if !ident.value().eq_ignore_ascii_case(b"define") {
-                return None;
-            }
-            let args: Vec<_> = func_call.argument_list.arguments.iter().collect();
-            if args.is_empty() {
-                return None;
-            }
-            let first_expr = match &args[0] {
-                Argument::Positional(pos) => pos.value,
-                Argument::Named(named) => named.value,
-            };
-            if let Expression::Literal(Literal::String(lit_str)) = first_expr
-                && let Some(name) = lit_str.value.and_then(literal_bytes_to_str)
-                && !name.is_empty()
-            {
-                let offset = lit_str.span.start.offset + 1;
-                // Extract the value from the second argument if present.
-                let value_text = args.get(1).and_then(|arg| {
-                    let val_expr = match arg {
-                        Argument::Positional(pos) => pos.value,
-                        Argument::Named(named) => named.value,
-                    };
-                    let start = val_expr.span().start.offset as usize;
-                    let end = val_expr.span().end.offset as usize;
-                    content.get(start..end).map(|s| s.to_string())
-                });
-                return Some((name.to_string(), offset, value_text));
-            }
-        }
-        None
     }
 }
