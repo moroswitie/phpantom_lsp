@@ -8,7 +8,7 @@
 use mago_syntax::cst::*;
 
 use crate::atom::{Atom, AtomMap, atom};
-use crate::docblock::{self, DocblockInfo};
+use crate::docblock::{self, DocblockInfo, TypeFacts};
 use crate::php_type::PhpType;
 use crate::types::ParameterInfo;
 
@@ -26,6 +26,11 @@ pub(super) struct Signature {
     pub native_return_type: Option<PhpType>,
     /// The native return type refined by `@return` and `#[ArrayShape]`.
     pub return_type: Option<PhpType>,
+    /// The PHPDoc return type written on the declaration: its `@return`,
+    /// or the `#[ArrayShape]` type that refined `return_type`.  `None`
+    /// when neither is written, and when `#[LanguageLevelTypeAware]` sets
+    /// the `@return` aside.
+    pub doc_return_type: Option<PhpType>,
     pub conditional_return: Option<PhpType>,
     /// The docblock's parse, for the extraction the caller does itself.
     pub docblock: Option<DocblockInfo>,
@@ -94,11 +99,22 @@ pub(super) fn extract_signature<'a>(
     let doc_info = docblock_text.and_then(docblock::parse_docblock_for_tags);
 
     let Some(info) = doc_info.as_ref() else {
-        let return_type = finish_return_type(native_return_type.clone(), attribute_lists, doc_ctx);
+        let TypeFacts {
+            effective: return_type,
+            doc: doc_return_type,
+        } = finish_return_type(
+            TypeFacts {
+                effective: native_return_type.clone(),
+                doc: None,
+            },
+            attribute_lists,
+            doc_ctx,
+        );
         return Some(Signature {
             parameters,
             native_return_type,
             return_type,
+            doc_return_type,
             conditional_return: None,
             docblock: doc_info,
             template_params: Vec::new(),
@@ -127,8 +143,11 @@ pub(super) fn extract_signature<'a>(
     }
     let mut template_params: Vec<Atom> = tpl_names.iter().map(|n| atom(n)).collect();
 
-    let effective = if return_from_lang_level {
-        native_return_type.clone()
+    let facts = if return_from_lang_level {
+        TypeFacts {
+            effective: native_return_type.clone(),
+            doc: None,
+        }
     } else {
         let parsed_doc_return = docblock::extract_return_type_from_info(info);
         docblock::resolve_effective_type_with_template_bounds(
@@ -141,7 +160,10 @@ pub(super) fn extract_signature<'a>(
             ),
         )
     };
-    let return_type = finish_return_type(effective, attribute_lists, doc_ctx);
+    let TypeFacts {
+        effective: return_type,
+        doc: doc_return_type,
+    } = finish_return_type(facts, attribute_lists, doc_ctx);
 
     let mut template_bindings: Vec<(Atom, Atom)> = if tpl_names.is_empty() {
         Vec::new()
@@ -197,6 +219,7 @@ pub(super) fn extract_signature<'a>(
         parameters,
         native_return_type,
         return_type,
+        doc_return_type,
         conditional_return,
         docblock: doc_info,
         template_params,
@@ -225,15 +248,25 @@ pub(super) fn template_bounds_in_scope<'b>(
     std::borrow::Cow::Owned(merged)
 }
 
-/// The effective return type with a bare `array` (or a nullable or union
+/// The return type facts with a bare `array` (or a nullable or union
 /// containing it) given way to the more specific `#[ArrayShape]` type.
+///
+/// An `#[ArrayShape]` that refines the type is JetBrains' written PHPDoc
+/// for it, so it becomes the doc type as well.
 fn finish_return_type(
-    effective: Option<PhpType>,
+    facts: TypeFacts,
     attribute_lists: &Sequence<'_, attribute::AttributeList<'_>>,
     doc_ctx: Option<&DocblockCtx<'_>>,
-) -> Option<PhpType> {
-    match doc_ctx {
-        Some(ctx) => effective.map(|ty| apply_array_shape_override(ty, attribute_lists, ctx)),
-        None => effective,
+) -> TypeFacts {
+    let (Some(ctx), Some(effective)) = (doc_ctx, facts.effective.as_ref()) else {
+        return facts;
+    };
+    let shaped = apply_array_shape_override(effective.clone(), attribute_lists, ctx);
+    if shaped == *effective {
+        return facts;
+    }
+    TypeFacts {
+        effective: Some(shaped.clone()),
+        doc: Some(shaped),
     }
 }

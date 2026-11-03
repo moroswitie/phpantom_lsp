@@ -75,7 +75,7 @@ pub use tags::{
 // Docblock vs. native type selection
 pub(crate) use type_override::is_compatible_refinement_typed;
 pub use type_override::{
-    resolve_effective_type_typed, resolve_effective_type_with_template_bounds,
+    TypeFacts, resolve_effective_type_typed, resolve_effective_type_with_template_bounds,
     should_override_type_typed,
 };
 

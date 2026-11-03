@@ -25,6 +25,20 @@ pub struct ParameterInfo {
     ///
     /// Call `.to_string()` when a display string is needed.
     pub native_type_hint: Option<PhpType>,
+    /// The PHPDoc type that applies to this parameter: written on it (its
+    /// `@param` tag, or a `@method` tag's parameter type), or inherited by
+    /// the member owner.  `None` when no PHPDoc type applies.
+    ///
+    /// This is the fact "a PHPDoc type was written", which `type_hint` alone
+    /// cannot tell: `@param int` on a native `int` leaves the two equal,
+    /// exactly as if no tag were written.  Inheritance reads it to decide
+    /// whether an ancestor's PHPDoc applies (`doc_type.is_none()`), and
+    /// copies it together with the type it inherits.
+    ///
+    /// Holds the type as the docblock wrote it: template substitution,
+    /// alias expansion and name qualification rewrite `type_hint` only, so
+    /// read `type_hint` for the value.
+    pub doc_type: Option<PhpType>,
     /// Human-readable description extracted from the `@param` tag.
     ///
     /// For `@param list<User> $users The active users`, this would be

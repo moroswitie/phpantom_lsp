@@ -38,6 +38,21 @@ pub struct MethodInfo {
     ///
     /// Call `.to_string()` when a display string is needed.
     pub native_return_type: Option<PhpType>,
+    /// The PHPDoc return type that applies to this method: written on it
+    /// (its `@return` tag, an `#[ArrayShape]` attribute, or a `@method`
+    /// tag's return type), or inherited by the member owner.  `None` when
+    /// no PHPDoc return type applies; framework providers set `None`.
+    ///
+    /// This is the fact "a PHPDoc type was written", which `return_type` alone
+    /// cannot tell: `@return string` on a native `string` leaves the two equal,
+    /// exactly as if no tag were written.  Inheritance reads it to decide
+    /// whether an ancestor's PHPDoc applies (`doc_return_type.is_none()`), and
+    /// copies it together with the type it inherits.
+    ///
+    /// Holds the type as the docblock wrote it: template substitution,
+    /// alias expansion and name qualification rewrite `return_type` only, so
+    /// read `return_type` for the value.
+    pub doc_return_type: Option<PhpType>,
     /// Human-readable description extracted from the method's docblock.
     ///
     /// This is the free-text portion of the docblock (before any `@tag` lines).
@@ -437,6 +452,7 @@ impl MethodInfo {
             parameters: SharedVec::new(),
             return_type: return_type.cloned(),
             native_return_type: None,
+            doc_return_type: None,
             description: None,
             is_static: false,
             visibility: Visibility::Public,

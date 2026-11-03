@@ -715,14 +715,15 @@ pub(crate) fn merge_param_docblock_into_parameters(
     for param in parameters.iter_mut() {
         let param_doc_type = extract_param_raw_type_from_info(info, &param.name);
         if let Some(ref doc_type) = param_doc_type {
-            let effective = resolve_effective_type_with_template_bounds(
+            let facts = resolve_effective_type_with_template_bounds(
                 param.type_hint.as_ref(),
                 Some(doc_type),
                 template_bounds,
             );
-            if effective.is_some() {
-                param.type_hint = effective;
+            if facts.effective.is_some() {
+                param.type_hint = facts.effective;
             }
+            param.doc_type = facts.doc;
         }
         param.description = extract_param_description_from_info(info, &param.name);
     }
@@ -737,14 +738,15 @@ pub(crate) fn merge_param_docblock_into_parameters(
             continue;
         }
         if let Some((None, doc_type)) = positional_tags.get(idx) {
-            let effective = resolve_effective_type_with_template_bounds(
+            let facts = resolve_effective_type_with_template_bounds(
                 param.type_hint.as_ref(),
                 Some(doc_type),
                 template_bounds,
             );
-            if effective.is_some() {
-                param.type_hint = effective;
+            if facts.effective.is_some() {
+                param.type_hint = facts.effective;
             }
+            param.doc_type = facts.doc;
         }
     }
 
@@ -798,8 +800,9 @@ pub(crate) fn merge_param_docblock_into_parameters(
             parameters.push(ParameterInfo {
                 name: atom(&tag_name),
                 is_required: false,
-                type_hint: Some(tag_type),
+                type_hint: Some(tag_type.clone()),
                 native_type_hint: None,
+                doc_type: Some(tag_type),
                 description,
                 default_value: None,
                 is_variadic: false,

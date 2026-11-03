@@ -166,6 +166,7 @@ pub(crate) fn extract_parameters(
                 is_required,
                 native_type_hint: native_type_hint.clone(),
                 type_hint,
+                doc_type: None,
                 description: None,
                 default_value,
                 is_variadic,

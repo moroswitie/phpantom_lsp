@@ -123,6 +123,7 @@ pub(crate) fn seed_params<'b>(
                     .map(|written| ctx.written_names().resolve_hint(written));
                 let effective =
                     crate::docblock::resolve_effective_type_typed(native.as_ref(), Some(&var_type))
+                        .effective
                         .unwrap_or(var_type);
                 let effective = match (native_type.as_ref(), native) {
                     (Some(written), Some(native))
@@ -513,6 +514,7 @@ pub(crate) fn declared_param_type(
         native_for_effective.as_ref(),
         doc_parsed.as_ref(),
     )
+    .effective
     .map(|ty| {
         if doc_accepts_default {
             ty.or_null()

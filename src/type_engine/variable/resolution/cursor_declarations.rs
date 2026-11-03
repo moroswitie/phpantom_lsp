@@ -113,7 +113,8 @@ impl ParamSite {
         source_class_loader: &dyn Fn(&str) -> Option<Arc<ClassInfo>>,
     ) -> Option<PhpType> {
         let effective =
-            docblock::resolve_effective_type_typed(self.native.as_ref(), self.docblock.as_ref());
+            docblock::resolve_effective_type_typed(self.native.as_ref(), self.docblock.as_ref())
+                .effective;
         match (effective, self.native) {
             (Some(settled), Some(written))
                 if settled != written

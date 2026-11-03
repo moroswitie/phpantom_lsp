@@ -54,6 +54,7 @@ pub(super) fn extract_method<'a>(
         mut parameters,
         native_return_type,
         return_type,
+        doc_return_type,
         conditional_return,
         docblock: method_docblock_info,
         template_params: method_template_params,
@@ -130,6 +131,7 @@ pub(super) fn extract_method<'a>(
         parameters: parameters.into(),
         native_return_type,
         return_type,
+        doc_return_type,
         description: info.and_then(crate::hover::extract_description_from_info),
         is_static: method.modifiers.iter().any(|m| m.is_static()),
         visibility: extract_visibility(method.modifiers.iter()),
@@ -239,8 +241,8 @@ fn push_promoted_properties<'a>(
                     .and_then(|info| docblock::extract_param_description_from_info(info, &raw_name))
             });
 
-        let type_hint = if let Some(ref var_type) = inline_var_type {
-            let effective =
+        let facts = if let Some(ref var_type) = inline_var_type {
+            let facts =
                 docblock::resolve_effective_type_typed(saved_native_hint.as_ref(), Some(var_type));
             // Without a `@param` of its own, the `@var` is the parameter's
             // documented type too, so it binds class templates from the
@@ -251,7 +253,7 @@ fn push_promoted_properties<'a>(
             if !has_param_tag {
                 bind_promoted_var_type(
                     var_type,
-                    effective.as_ref(),
+                    facts.effective.as_ref(),
                     &raw_name,
                     class_template_params,
                     &mut signature.parameters,
@@ -259,7 +261,7 @@ fn push_promoted_properties<'a>(
                     &mut signature.template_bindings,
                 );
             }
-            effective
+            facts
         } else if let Some(ref info) = signature.docblock {
             let parsed = docblock::extract_param_raw_type_from_info(info, &raw_name);
             docblock::resolve_effective_type_with_template_bounds(
@@ -268,14 +270,18 @@ fn push_promoted_properties<'a>(
                 class_template_param_bounds,
             )
         } else {
-            saved_native_hint.clone()
+            docblock::TypeFacts {
+                effective: saved_native_hint.clone(),
+                doc: None,
+            }
         };
+        let doc_type = facts.doc;
 
         // When no type hint is available, infer from `new ClassName()`
         // default values (PHP 8.1+: `private $repo = new Repo()`).  Resolve
         // to FQN eagerly so downstream code does not need short-name
         // resolution logic.
-        let type_hint = type_hint.or_else(|| {
+        let type_hint = facts.effective.or_else(|| {
             let dv = param.default_value.as_ref()?;
             if let Expression::Instantiation(inst) = dv.value
                 && let Expression::Identifier(ident) = inst.class
@@ -291,6 +297,7 @@ fn push_promoted_properties<'a>(
             name_offset: param.variable.span.start.offset,
             native_type_hint: saved_native_hint,
             type_hint,
+            doc_type,
             description,
             is_static: false,
             is_readonly: prop_readonly,
@@ -324,6 +331,7 @@ fn bind_promoted_var_type(
 ) {
     if let Some(param) = parameters.iter_mut().find(|p| p.name == param_name) {
         param.type_hint = effective.cloned();
+        param.doc_type = Some(var_type.clone());
     }
     if class_template_params.is_empty()
         || !(method_template_params.is_empty()

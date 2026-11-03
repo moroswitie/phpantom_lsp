@@ -258,6 +258,7 @@ fn type_hint_to_classes_typed_depth(
                             name_offset: 0,
                             type_hint: Some(type_hint),
                             native_type_hint: None,
+                            doc_type: None,
                             description: None,
                             is_static: false,
                             visibility: Visibility::Public,

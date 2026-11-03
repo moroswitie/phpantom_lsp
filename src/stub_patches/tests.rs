@@ -57,6 +57,7 @@ fn param(name: &str, type_hint: &str) -> crate::types::ParameterInfo {
         is_required: true,
         type_hint: Some(PhpType::parse(type_hint)),
         native_type_hint: Some(PhpType::parse(type_hint)),
+        doc_type: None,
         description: None,
         default_value: None,
         is_variadic: false,

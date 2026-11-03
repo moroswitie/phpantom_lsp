@@ -445,6 +445,7 @@ mod tests {
             name: atom(name),
             type_hint: None,
             native_type_hint: None,
+            doc_type: None,
             description: None,
             default_value: if is_required {
                 None

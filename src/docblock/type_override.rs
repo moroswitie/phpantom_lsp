@@ -383,6 +383,23 @@ fn extract_base_name_lower(ty: &PhpType) -> String {
 
 // ─── Effective Type Resolution ──────────────────────────────────────────────
 
+/// What a declaration's types are: the one it holds, and the PHPDoc type
+/// written on it.
+///
+/// Returned by [`resolve_effective_type_typed`] and
+/// [`resolve_effective_type_with_template_bounds`] so that no caller can
+/// keep the effective type and silently drop the fact that a docblock type
+/// was written: `@param int $id` on a native `int $id` settles on `int`
+/// either way, and only `doc` tells the two apart.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TypeFacts {
+    /// The type the declaration holds: the docblock type where it refines
+    /// the native hint, the native hint otherwise.
+    pub effective: Option<PhpType>,
+    /// The docblock type as written, whether or not it won.
+    pub doc: Option<PhpType>,
+}
+
 /// [`resolve_effective_type_typed`] for a declaration that introduces its
 /// own `@template` parameters, `bounds` being their `of` bounds.
 ///
@@ -393,6 +410,18 @@ fn extract_base_name_lower(ty: &PhpType) -> String {
 /// template's bound the same way).  Anything the bound cannot vouch for is
 /// judged as before.
 pub fn resolve_effective_type_with_template_bounds(
+    native_type: Option<&PhpType>,
+    docblock_type: Option<&PhpType>,
+    bounds: &crate::atom::AtomMap<PhpType>,
+) -> TypeFacts {
+    TypeFacts {
+        effective: effective_type_with_template_bounds(native_type, docblock_type, bounds),
+        doc: docblock_type.cloned(),
+    }
+}
+
+/// The effective half of [`resolve_effective_type_with_template_bounds`].
+fn effective_type_with_template_bounds(
     native_type: Option<&PhpType>,
     docblock_type: Option<&PhpType>,
     bounds: &crate::atom::AtomMap<PhpType>,
@@ -434,7 +463,7 @@ pub fn resolve_effective_type_with_template_bounds(
             }
         }
     }
-    resolve_effective_type_typed(native_type, docblock_type)
+    effective_type(native_type, docblock_type)
 }
 
 /// Pick the best available type between a native type hint and a docblock
@@ -448,6 +477,17 @@ pub fn resolve_effective_type_with_template_bounds(
 /// raw docblock strings should use [`super::sanitise_and_parse_docblock_type`]
 /// first.
 pub fn resolve_effective_type_typed(
+    native_type: Option<&PhpType>,
+    docblock_type: Option<&PhpType>,
+) -> TypeFacts {
+    TypeFacts {
+        effective: effective_type(native_type, docblock_type),
+        doc: docblock_type.cloned(),
+    }
+}
+
+/// The effective half of [`resolve_effective_type_typed`].
+fn effective_type(
     native_type: Option<&PhpType>,
     docblock_type: Option<&PhpType>,
 ) -> Option<PhpType> {

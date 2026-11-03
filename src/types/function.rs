@@ -104,6 +104,18 @@ pub struct FunctionInfo {
     ///
     /// Call `.to_string()` when a display string is needed.
     pub native_return_type: Option<PhpType>,
+    /// The PHPDoc return type written on this function (its `@return`
+    /// tag or an `#[ArrayShape]` attribute).  `None` when none is written.
+    ///
+    /// This is the fact "a PHPDoc type was written", which `return_type` alone
+    /// cannot tell: `@return string` on a native `string` leaves the two equal,
+    /// exactly as if no tag were written.  Readers ask it instead of
+    /// comparing `return_type` with `native_return_type`.
+    ///
+    /// Holds the type as the docblock wrote it: template substitution,
+    /// alias expansion and name qualification rewrite `return_type` only, so
+    /// read `return_type` for the value.
+    pub doc_return_type: Option<PhpType>,
     /// Human-readable description extracted from the function's docblock.
     ///
     /// This is the free-text portion of the docblock (before any `@tag` lines).
