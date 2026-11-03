@@ -487,3 +487,30 @@ fn an_unrelated_function_keeps_its_parameter_types() {
 
     assert_eq!(func.parameters[0].type_hint, Some(PhpType::string()));
 }
+
+/// A patched return type stands in for the `@return` the stub should have
+/// carried, so it is recorded as the method's doc type: an override that
+/// writes no docblock then inherits it, as it would a written tag.
+#[test]
+fn a_patched_return_type_is_the_methods_doc_type() {
+    let mut class = empty_class("IteratorIterator");
+    let mixed = PhpType::parse("mixed");
+    let current = crate::types::MethodInfo {
+        name: atom("current"),
+        return_type: Some(mixed.clone()),
+        native_return_type: Some(mixed),
+        ..Default::default()
+    };
+    class.methods.push(std::sync::Arc::new(current));
+
+    apply_class_stub_patches(&mut class);
+
+    let current = class
+        .methods
+        .iter()
+        .find(|m| m.name == "current")
+        .expect("current()");
+    let t_value = PhpType::named(atom("TValue"));
+    assert_eq!(current.return_type.as_ref(), Some(&t_value));
+    assert_eq!(current.doc_return_type.as_ref(), Some(&t_value));
+}

@@ -2,7 +2,7 @@
 
 use crate::atom::{Atom, atom};
 use crate::php_type::PhpType;
-use crate::types::ClassInfo;
+use crate::types::{ClassInfo, MethodInfo};
 
 /// Apply all registered stub patches to a freshly-parsed class.
 ///
@@ -368,10 +368,10 @@ fn patch_callback_filter_iterator(class: &mut ClassInfo) {
 /// `attributes->item(0)` loses the `DOMAttr` every other accessor keeps.
 fn patch_dom_named_node_map(class: &mut ClassInfo) {
     with_method_mut(class, "item", |method| {
-        method.return_type = Some(PhpType::union(vec![
-            PhpType::named(atom("TNode")),
-            PhpType::null(),
-        ]));
+        set_doc_return_type(
+            method,
+            PhpType::union(vec![PhpType::named(atom("TNode")), PhpType::null()]),
+        );
     });
 }
 
@@ -407,7 +407,7 @@ fn patch_dom_node(class: &mut ClassInfo) {
 /// `numeric-string`; the stub declares `__toString(): string`.
 fn patch_numeric_to_string(class: &mut ClassInfo) {
     with_method_mut(class, "__toString", |method| {
-        method.return_type = Some(PhpType::numeric_string());
+        set_doc_return_type(method, PhpType::numeric_string());
     });
 }
 
@@ -429,7 +429,8 @@ fn patch_dom_element(class: &mut ClassInfo) {
     let mut property = (*class.properties[idx]).clone();
     let map = PhpType::generic("DOMNamedNodeMap", vec![PhpType::named(atom("DOMAttr"))]);
     property.native_type_hint = Some(PhpType::named(atom("DOMNamedNodeMap")));
-    property.type_hint = Some(map);
+    property.type_hint = Some(map.clone());
+    property.doc_type = Some(map);
     class.properties.make_mut()[idx] = std::sync::Arc::new(property);
 }
 
@@ -519,7 +520,7 @@ fn patch_reflection_class(class: &mut ClassInfo) {
     patch_reflection_is_subclass_of(class);
 
     with_method_mut(class, "getInterfaceNames", |method| {
-        method.return_type = Some(PhpType::parse("list<class-string>"));
+        set_doc_return_type(method, PhpType::parse("list<class-string>"));
     });
 
     let Some(idx) = method_index(class, "newInstanceArgs") else {
@@ -656,6 +657,7 @@ fn patch_constructor_template_binding(class: &mut ClassInfo, template: &str, par
         .find(|p| p.name == param)
     {
         p.type_hint = Some(PhpType::named(template));
+        p.doc_type = p.type_hint.clone();
     }
     class.methods.make_mut()[ctor_idx] = std::sync::Arc::new(ctor);
 }
@@ -666,8 +668,18 @@ fn patch_constructor_template_binding(class: &mut ClassInfo, template: &str, par
 /// Used to patch stub methods like `current(): mixed` → `current(): TValue`.
 fn patch_method_return_type(class: &mut ClassInfo, method_name: &str, return_type: PhpType) {
     with_method_mut(class, method_name, |method| {
-        method.return_type = Some(return_type);
+        set_doc_return_type(method, return_type);
     });
+}
+
+/// Give `method` the return type a patch writes in place of the stub's.
+///
+/// A patch stands in for the `@return` the stub should have carried, so
+/// the type is recorded as the method's doc type too: an override that
+/// writes no docblock of its own inherits it, as it would a written tag.
+fn set_doc_return_type(method: &mut MethodInfo, return_type: PhpType) {
+    method.return_type = Some(return_type.clone());
+    method.doc_return_type = Some(return_type);
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
