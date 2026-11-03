@@ -101,11 +101,8 @@ fn qualify_param(
     qualify_native: bool,
 ) {
     crate::parser::qualify_param_default(param, scope.use_map, scope.namespace);
-    let native_was_effective = qualify_native && param.native_type_hint == param.type_hint;
     qualify_in_place(&mut param.type_hint, resolver);
-    if native_was_effective {
-        param.native_type_hint = param.type_hint.clone();
-    } else if qualify_native {
+    if qualify_native {
         qualify_in_place(&mut param.native_type_hint, resolver);
     }
     // `@param-closure-this` names a class the same way the rest of the
@@ -171,9 +168,7 @@ impl Backend {
             let not_a_class = |name: &str| skip_names.iter().any(|t| t == name);
             let mut unverified: Vec<UnverifiedDocType> = Vec::new();
 
-            // Asked before qualifying, which sets every class name
-            // apart from the hint as written.
-            let return_from_docblock = func.return_type != func.native_return_type;
+            let return_from_docblock = func.doc_return_type.is_some();
             qualify_in_place(
                 func.return_type
                     .iter_mut()
@@ -192,7 +187,7 @@ impl Backend {
             }
             let func_name = func.name;
             for (position, param) in func.parameters.make_mut().iter_mut().enumerate() {
-                let from_docblock = param.type_hint != param.native_type_hint;
+                let from_docblock = param.doc_type.is_some();
                 qualify_param(param, &resolver, scope, false);
                 // The native hint is kept as written.
                 if from_docblock
@@ -691,9 +686,7 @@ impl Backend {
             &owned_resolver
         };
 
-        // Asked before qualifying, which sets every class name apart
-        // from the native return type kept as written.
-        let return_from_docblock = method.return_type != method.native_return_type;
+        let return_from_docblock = method.doc_return_type.is_some();
         qualify_in_place(&mut method.return_type, resolver);
         let (self_fqn, parent_fqn) = keyword_fqns;
         for param in method.parameters.make_mut() {
@@ -755,7 +748,7 @@ impl Backend {
             let Some(hint) = prop.type_hint.as_ref() else {
                 continue;
             };
-            let from_docblock = prop.native_type_hint.as_ref() != Some(hint);
+            let from_docblock = prop.doc_type.is_some();
             let resolved = hint.resolve_names(resolver);
             if from_docblock
                 && let Some(native) = prop.native_type_hint.as_ref()
@@ -846,8 +839,8 @@ impl Backend {
         }
         // A parameter's native hint is qualified along with the rest.
         for (position, param) in method.parameters.iter().enumerate() {
-            if let (Some(settled), Some(native)) = (&param.type_hint, &param.native_type_hint)
-                && settled != native
+            if param.doc_type.is_some()
+                && let (Some(settled), Some(native)) = (&param.type_hint, &param.native_type_hint)
                 && docblock_narrowing::names_class_beyond_native(settled, native, &not_a_class)
             {
                 out.push(UnverifiedDocType {

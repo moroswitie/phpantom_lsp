@@ -269,7 +269,6 @@ fn issue_26_inline_inheritdoc_expands_the_parent_summary() {
 ///
 /// Spec: INH-004.
 #[test]
-#[ignore = "issue 23 / D-06, D-10: an explicit child @param equal to the native type is dropped for the parent's tag and text"]
 fn issue_23_explicit_param_tag_without_text_hides_the_parent_text() {
     assert_member_hover(
         P7_DESCRIPTIONS,
@@ -289,7 +288,6 @@ fn issue_23_explicit_param_tag_without_text_hides_the_parent_text() {
 ///
 /// Spec: INH-004.
 #[test]
-#[ignore = "issue 23 / D-06: an explicit child @param equal to the native type is dropped for the parent's tag"]
 fn issue_23_explicit_param_tag_types_the_child_body() {
     assert_var_type(P7_DESCRIPTIONS, "$__e", "int");
 }

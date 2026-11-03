@@ -291,7 +291,6 @@ fn issue_24_member_hover_shows_inherited_var_type_and_text() {
 ///
 /// Spec: INH-004.
 #[test]
-#[ignore = "issue 23 / D-06: an explicit child @param equal to the native type is dropped for the parent's tag"]
 fn issue_23_explicit_param_equal_to_native_wins() {
     assert_var_type(D3_INHERIT, "$__d1", "int");
 }
@@ -301,7 +300,6 @@ fn issue_23_explicit_param_equal_to_native_wins() {
 ///
 /// Spec: INH-004.
 #[test]
-#[ignore = "issue 23 / D-06: an explicit child @return equal to the native type is dropped for the parent's tag"]
 fn issue_23_explicit_return_equal_to_native_wins() {
     assert_var_type(D3_INHERIT, "$__d10", "string");
 }
