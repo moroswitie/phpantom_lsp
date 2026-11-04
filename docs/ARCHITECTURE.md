@@ -862,7 +862,8 @@ to guess it.
   `FunctionInfo::doc_return_type` hold the PHPDoc type that applies to the
   declaration: written on it (`@param`, `@var`, `@return`, a promoted
   parameter's `@var`, a `@property` / `@method` tag, a refining
-  `#[ArrayShape]`) or inherited with the type. `resolve_effective_type_typed`
+  `#[ArrayShape]`, an Eloquent relationship type the method's body
+  supplies) or inherited with the type. `resolve_effective_type_typed`
   and `resolve_effective_type_with_template_bounds`
   (`src/docblock/type_override.rs`) return `TypeFacts { effective, doc }`,
   so a caller cannot keep the effective type and drop the fact. The field

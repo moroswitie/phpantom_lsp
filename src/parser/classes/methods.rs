@@ -12,7 +12,7 @@ use crate::parser::{
 };
 use crate::php_type::PhpType;
 use crate::types::*;
-use crate::virtual_members::laravel::{has_scope_attribute, relationship_return_type};
+use crate::virtual_members::laravel::{has_scope_attribute, relationship_type_from_body};
 
 use super::resolve_written_class;
 
@@ -73,8 +73,15 @@ pub(super) fn extract_method<'a>(
 
     // An Eloquent relationship's related model comes from the body
     // (`$this->hasMany(Post::class)`) when the declared type does not name
-    // it.
-    let return_type = relationship_return_type(return_type, method, doc_ctx);
+    // it.  Like a refining `#[ArrayShape]`, that type is PHPDoc-level
+    // information the declaration supplies, so it is the doc return type
+    // as well: an undocumented override (`return parent::posts();`)
+    // inherits it the way it inherits a written `@return`.
+    let (return_type, doc_return_type) =
+        match relationship_type_from_body(return_type.as_ref(), method, doc_ctx) {
+            Some(from_body) => (Some(from_body.clone()), Some(from_body)),
+            None => (return_type, doc_return_type),
+        };
 
     // Merge `@param` docblock types into parameter type hints so that
     // callable signatures like `callable(User): void` are preserved.  This

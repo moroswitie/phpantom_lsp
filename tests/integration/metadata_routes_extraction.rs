@@ -875,7 +875,6 @@ fn l1_with_property_reads() -> String {
 /// The relationship method's record holds the type its body inferred as
 /// a doc return type, and the undocumented override inherits it.
 #[test]
-#[ignore = "issue 27: the body-inferred relationship type is not recorded as a doc return type, so the override keeps a bare HasMany"]
 fn issue_27_relationship_override_record() {
     let backend = create_test_backend();
     let classes = backend.parse_php(L1);
@@ -896,7 +895,6 @@ fn issue_27_relationship_override_record() {
 /// The hover on the override's call shows the parent's relationship type,
 /// and the relationship property has the same type on both classes.
 #[test]
-#[ignore = "issue 27: the override of a relationship method hovers as a bare HasMany"]
 fn issue_27_relationship_override_hover() {
     let (backend, _dir, uri) = l1_workspace();
     let content = l1_with_property_reads();
@@ -927,7 +925,6 @@ fn issue_27_relationship_override_hover() {
 /// The type engine gives the call through the override the parent's
 /// relationship type.
 #[test]
-#[ignore = "issue 27: a call through the override of a relationship method answers a bare HasMany"]
 fn issue_27_relationship_override_type_engine() {
     let (backend, _dir, uri) = l1_workspace();
     for var in ["$__l1", "$__l2"] {
@@ -937,7 +934,6 @@ fn issue_27_relationship_override_type_engine() {
 
 /// Completion offers `posts` with the same details on both classes.
 #[tokio::test]
-#[ignore = "issue 27: completion details of posts differ between the relationship and its override"]
 async fn issue_27_relationship_override_completion() {
     let content = l1_with_property_reads();
     let mut details = Vec::new();
