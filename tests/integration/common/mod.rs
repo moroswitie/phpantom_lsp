@@ -1840,3 +1840,69 @@ pub fn type_at_marker(backend: &Backend, uri: &str, content: &str, marker: &str)
     let needle = format!("/*{marker}*/$");
     hover_assigned_type(backend, uri, content, position_after(content, &needle))
 }
+
+/// Hover `delta` characters into the `nth` (0-based) occurrence of
+/// `needle` in `content`, parsed as `file:///test.php` on a fresh
+/// [`create_test_backend`].
+pub fn hover_markdown(content: &str, needle: &str, delta: u32, nth: usize) -> Option<String> {
+    hover_markdown_on(
+        &create_test_backend(),
+        "file:///test.php",
+        content,
+        needle,
+        delta,
+        nth,
+    )
+}
+
+/// [`hover_markdown`] against a backend the caller has prepared, with
+/// `content` parsed as `uri`.
+pub fn hover_markdown_on(
+    backend: &Backend,
+    uri: &str,
+    content: &str,
+    needle: &str,
+    delta: u32,
+    nth: usize,
+) -> Option<String> {
+    let (offset, _) = content
+        .match_indices(needle)
+        .nth(nth)
+        .unwrap_or_else(|| panic!("occurrence {nth} of {needle:?} not found"));
+    let position = offset_position(content, offset + delta as usize);
+    hover_at(backend, uri, content, position.line, position.character)
+        .map(|hover| hover_text(&hover).to_string())
+}
+
+/// Shorthand: hover on `"$var ="` (delta 1) and return the markdown.
+pub fn var_hover(content: &str, var: &str) -> String {
+    var_hover_on(&create_test_backend(), "file:///test.php", content, var)
+}
+
+/// [`var_hover`] against a backend the caller has prepared, with
+/// `content` parsed as `uri`.
+pub fn var_hover_on(backend: &Backend, uri: &str, content: &str, var: &str) -> String {
+    hover_markdown_on(backend, uri, content, &format!("{var} ="), 1, 0)
+        .unwrap_or_else(|| panic!("expected a hover on {var}"))
+}
+
+/// Assert the variable hover of `var` renders `"{var} = {expected}"`.
+pub fn assert_var_type(content: &str, var: &str, expected: &str) {
+    assert_var_type_on(
+        &create_test_backend(),
+        "file:///test.php",
+        content,
+        var,
+        expected,
+    );
+}
+
+/// [`assert_var_type`] against a backend the caller has prepared, with
+/// `content` parsed as `uri`.
+pub fn assert_var_type_on(backend: &Backend, uri: &str, content: &str, var: &str, expected: &str) {
+    let markdown = var_hover_on(backend, uri, content, var);
+    assert!(
+        markdown.contains(&format!("{var} = {expected}\n")),
+        "{var}: expected `{expected}`, got:\n{markdown}"
+    );
+}
