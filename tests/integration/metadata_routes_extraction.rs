@@ -4,6 +4,8 @@
 //!
 //! - Row A: which docblock belongs to a declaration next to attributes
 //!   (issue 17 + N1, ATTR-001 to ATTR-004).
+//! - Row B: the written doc type, and inheritance read from it (issues 23
+//!   and 27, D-03, D-04, D-06).
 //!
 //! Intended differences between routes: hover shows types and texts, a
 //! completion `detail` shows the type only, signature help shows the
@@ -11,14 +13,16 @@
 //! what its declaration wrote; a resolved one adds what inheritance
 //! supplies.
 
+use std::sync::Arc;
+
 use crate::common::{
     assert_var_type, assert_var_type_on, collect_diagnostics_with, completion_response,
-    create_psr4_workspace, create_test_backend, hover_markdown_on, messages_with_code,
-    offset_position, open_php,
+    create_psr4_workspace, create_test_backend, create_test_backend_with_full_stubs,
+    hover_markdown, hover_markdown_on, messages_with_code, offset_position, open_php,
 };
 use phpantom_lsp::php_type::PhpType;
 use phpantom_lsp::types::{MethodInfo, ParameterInfo, PropertyInfo};
-use phpantom_lsp::{Backend, ClassInfo};
+use phpantom_lsp::{Backend, ClassInfo, Fqn, resolve_class_fully};
 use tower_lsp_server::LanguageServer;
 use tower_lsp_server::gen_lsp_types::*;
 
@@ -107,10 +111,11 @@ async fn completion_detail(
 /// One parameter as signature help shows it: the type it reports (the
 /// effective type in the documentation's code span when it differs from
 /// the native one, otherwise the native type of the label) with the
-/// name.
+/// name, and the parameter's text.
 #[derive(Debug)]
 struct ShownParam {
     typed: String,
+    text: Option<String>,
 }
 
 /// The parameters signature help shows right after the first occurrence
@@ -161,14 +166,19 @@ async fn signature_params(
             });
             let code_span = doc.as_deref().and_then(|doc| {
                 let rest = doc.strip_prefix('`')?;
-                Some(rest.split_once('`')?.0.to_string())
+                let (ty, after) = rest.split_once('`')?;
+                Some((ty.to_string(), after.trim().to_string()))
             });
-            let ty = code_span.or_else(|| native.map(str::to_string));
+            let (ty, text) = match code_span {
+                Some((ty, after)) => (Some(ty), Some(after).filter(|t| !t.is_empty())),
+                None => (native.map(str::to_string), doc),
+            };
             ShownParam {
                 typed: match ty {
                     Some(ty) => format!("{ty} {name}"),
                     None => name.to_string(),
                 },
+                text,
             }
         })
         .collect()
@@ -389,4 +399,559 @@ fn issue_17_docblock_after_attribute_from_a_file_not_open() {
     let main = "<?php\n$v = new \\App\\Vault('x', 1);\n$__r1 = $v->secret;\n";
     let uri = Uri::from_file_path(dir.path().join("main.php")).unwrap();
     assert_var_type_on(&backend, uri.as_str(), main, "$__r1", "non-empty-string");
+}
+
+// ─── Row B: the written doc type, and inheritance read from it ──────────────
+
+/// D3: a parent with narrower doc types, and overrides that document the
+/// same types explicitly, document nothing, or document only a summary.
+const D3: &str = include_str!("../conformance/php-symbol-metadata/inheritance/partial-docs.php");
+
+/// Q1: an undocumented override of a stub method whose type a stub patch
+/// supplies. PHPStan 2.3.1 types both calls `Foo`.
+const Q1: &str = r#"<?php
+class Foo {}
+/** @extends IteratorIterator<int, Foo, ArrayIterator<int, Foo>> */
+class MyIt extends IteratorIterator {
+    public function current(): mixed { return parent::current(); }
+}
+/** @extends IteratorIterator<int, Foo, ArrayIterator<int, Foo>> */
+class PlainIt extends IteratorIterator {}
+function f(MyIt $it, PlainIt $p): void {
+    $__d1 = $it->current();
+    $__d2 = $p->current();
+}
+"#;
+
+/// Q2: a `@param` without a type, with and without text. PHPStan 2.3.1
+/// types both `$id` as the parent's `int<1, max>`; a tag without a type
+/// counts as absent unless it has text.
+const Q2: &str = r#"<?php
+class P {
+    /** @param positive-int $id Parent text. */
+    public function find(int $id): void {}
+}
+class C extends P {
+    /** @param $id */
+    public function find(int $id): void { $__d1 = $id; }
+}
+class D extends P {
+    /** @param $id Child text only. */
+    public function find(int $id): void { $__d2 = $id; }
+}
+"#;
+
+/// Q3: a promoted property typed by the constructor's `@phpstan-param`
+/// (PHPStan 2.3.1: `list<int>`).
+const Q3: &str = r#"<?php
+class Inventory {
+    /**
+     * @param array $items The items.
+     * @phpstan-param list<int> $items
+     */
+    public function __construct(public array $items) {}
+}
+$__d1 = (new Inventory([]))->items;
+"#;
+
+/// Q4: the nearest documented ancestor wins, even when its doc type equals
+/// the native type (PHPStan 2.3.1: `int` and `string`).
+const Q4: &str = r#"<?php
+class P {
+    /**
+     * @param positive-int $id
+     * @return non-empty-string
+     */
+    public function find(int $id): string { return 'x'; }
+}
+class ExplicitEqual extends P {
+    /**
+     * @param int $id
+     * @return string
+     */
+    public function find(int $id): string { return ''; }
+}
+class Leaf extends ExplicitEqual {
+    public function find(int $id): string { $__d1 = $id; return ''; }
+}
+$__d2 = (new Leaf())->find(1);
+"#;
+
+/// L1 (issue 27): an undocumented override of an Eloquent relationship
+/// whose related model the parent's body supplies. The override answers
+/// its parent's type, `HasMany<Post>`, on every route.
+const L1: &str = r#"<?php
+namespace App\Models;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+class Post extends Model {}
+class Author extends Model {
+    public function posts(): HasMany { return $this->hasMany(Post::class); }
+}
+class GuestAuthor extends Author {
+    public function posts(): HasMany { return parent::posts(); }
+}
+$__l1 = (new Author())->posts();
+$__l2 = (new GuestAuthor())->posts();
+"#;
+
+/// The part of the Laravel `Model` stub of the Laravel integration tests
+/// that L1 calls, with the classes its types name.
+const L1_FRAMEWORK: &[(&str, &str)] = &[
+    (
+        "vendor/illuminate/Eloquent/Model.php",
+        r#"<?php
+namespace Illuminate\Database\Eloquent;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+class Model {
+    /**
+     * @template TRelatedModel of Model
+     * @param class-string<TRelatedModel> $related
+     * @return HasMany<TRelatedModel, $this>
+     */
+    public function hasMany($related, $foreignKey = null, $localKey = null) {}
+}
+"#,
+    ),
+    (
+        "vendor/illuminate/Eloquent/Collection.php",
+        "<?php\nnamespace Illuminate\\Database\\Eloquent;\n/**\n * @template TKey of array-key\n * @template TModel\n */\nclass Collection {}\n",
+    ),
+    (
+        "vendor/illuminate/Eloquent/Relations/HasMany.php",
+        "<?php\nnamespace Illuminate\\Database\\Eloquent\\Relations;\nclass HasMany {}\n",
+    ),
+];
+
+const L1_COMPOSER: &str = r#"{"autoload": {"psr-4": {
+    "App\\Models\\": "src/Models/",
+    "Illuminate\\Database\\Eloquent\\": "vendor/illuminate/Eloquent/",
+    "Illuminate\\Database\\Eloquent\\Relations\\": "vendor/illuminate/Eloquent/Relations/"
+}}}"#;
+
+/// A workspace with the L1 framework files, and the URI L1 is parsed as
+/// (`src/Models/Authors.php`, never written to disk).
+fn l1_workspace() -> (Backend, tempfile::TempDir, String) {
+    let (backend, dir) = create_psr4_workspace(L1_COMPOSER, L1_FRAMEWORK);
+    let uri = Uri::from_file_path(dir.path().join("src/Models/Authors.php"))
+        .unwrap()
+        .as_str()
+        .to_string();
+    (backend, dir, uri)
+}
+
+/// `ty` with every class name shortened to its last segment, the way
+/// hovers print types.
+fn short(ty: &str) -> String {
+    let mut out = String::new();
+    let mut word = String::new();
+    for c in ty.chars().chain(['\0']) {
+        if c.is_alphanumeric() || c == '_' || c == '\\' {
+            word.push(c);
+            continue;
+        }
+        out.push_str(word.rsplit('\\').next().unwrap_or_default());
+        word.clear();
+        if c != '\0' {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// `classes`, loadable by name, the way the index would serve them.
+fn loader_of(classes: Vec<ClassInfo>) -> impl Fn(Fqn<'_>) -> Option<Arc<ClassInfo>> {
+    let classes: Vec<Arc<ClassInfo>> = classes.into_iter().map(Arc::new).collect();
+    move |name: Fqn<'_>| {
+        let name = name.as_str();
+        let name = name.rsplit('\\').next().unwrap_or(name);
+        classes.iter().find(|c| c.name == name).cloned()
+    }
+}
+
+/// Each declaration's own record holds the doc type it wrote, and none
+/// when it wrote none, also when the written type equals the native one.
+///
+/// Spec: INH-004; decisions D-01, D-03.
+#[test]
+fn issue_23_written_doc_type_local_record() {
+    let backend = create_test_backend();
+
+    let classes = backend.parse_php(D3);
+    let p = class(&classes, "P");
+    let find = method(p, "find");
+    assert_eq!(
+        text(&param(find, "$id").doc_type).as_deref(),
+        Some("positive-int")
+    );
+    assert_eq!(
+        text(&find.doc_return_type).as_deref(),
+        Some("non-empty-string")
+    );
+    assert_eq!(
+        text(&property(p, "label").doc_type).as_deref(),
+        Some("non-empty-string")
+    );
+
+    let explicit = class(&classes, "ExplicitEqual");
+    let find = method(explicit, "find");
+    assert_eq!(text(&param(find, "$id").doc_type).as_deref(), Some("int"));
+    assert_eq!(text(&find.doc_return_type).as_deref(), Some("string"));
+    assert_eq!(
+        text(&property(explicit, "label").doc_type).as_deref(),
+        Some("string")
+    );
+
+    for name in ["NoDoc", "DescriptionOnly"] {
+        let find = method(class(&classes, name), "find");
+        for parameter in ["$id", "$name"] {
+            assert_eq!(param(find, parameter).doc_type, None, "{name} {parameter}");
+        }
+        assert_eq!(find.doc_return_type, None, "{name} return");
+    }
+    assert_eq!(property(class(&classes, "NoDoc"), "label").doc_type, None);
+
+    let classes = backend.parse_php(Q2);
+    for name in ["C", "D"] {
+        let find = method(class(&classes, name), "find");
+        assert_eq!(param(find, "$id").doc_type, None, "{name} $id");
+    }
+
+    let classes = backend.parse_php(Q3);
+    assert_eq!(
+        text(&property(class(&classes, "Inventory"), "items").doc_type).as_deref(),
+        Some("list<int>")
+    );
+}
+
+/// A resolved record takes its doc types from the nearest documented
+/// ancestor, through undocumented ones, and resolving a child leaves the
+/// parent's parsed record as it was.
+///
+/// Spec: INH-001, INH-010, INH-014; decisions D-03, D-06.
+#[test]
+fn issue_23_written_doc_type_resolved_record() {
+    let backend = create_test_backend();
+
+    let classes = backend.parse_php(D3);
+    let parent_before = format!("{:?}", class(&classes, "P"));
+    let no_doc = class(&classes, "NoDoc").clone();
+    let grand = class(&classes, "Grand").clone();
+    let loader = loader_of(classes);
+    for child in [&no_doc, &grand] {
+        let resolved = resolve_class_fully(child, &loader);
+        let find = method(&resolved, "find");
+        let id = param(find, "$id");
+        assert_eq!(
+            text(&id.doc_type).as_deref(),
+            Some("positive-int"),
+            "{}",
+            child.name
+        );
+        assert_eq!(
+            text(&id.type_hint).as_deref(),
+            Some("positive-int"),
+            "{}",
+            child.name
+        );
+        assert_eq!(
+            text(&find.doc_return_type).as_deref(),
+            Some("non-empty-string"),
+            "{}",
+            child.name
+        );
+        assert_eq!(
+            text(&find.return_type).as_deref(),
+            Some("non-empty-string"),
+            "{}",
+            child.name
+        );
+    }
+    let resolved = resolve_class_fully(&no_doc, &loader);
+    let label = property(&resolved, "label");
+    assert_eq!(text(&label.doc_type).as_deref(), Some("non-empty-string"));
+    assert_eq!(text(&label.type_hint).as_deref(), Some("non-empty-string"));
+    let parent_after = loader(Fqn::new("P")).expect("P");
+    assert_eq!(
+        format!("{parent_after:?}"),
+        parent_before,
+        "P's parsed record"
+    );
+
+    let classes = backend.parse_php(Q4);
+    let leaf = class(&classes, "Leaf").clone();
+    let resolved = resolve_class_fully(&leaf, &loader_of(classes));
+    let find = method(&resolved, "find");
+    let id = param(find, "$id");
+    assert_eq!(text(&id.doc_type).as_deref(), Some("int"));
+    assert_eq!(text(&id.type_hint).as_deref(), Some("int"));
+    assert_eq!(text(&find.doc_return_type).as_deref(), Some("string"));
+    assert_eq!(text(&find.return_type).as_deref(), Some("string"));
+}
+
+/// A member hover shows the types and texts the record decided.
+///
+/// Spec: INH-001, INH-004; decisions D-01, D-03, D-10.
+#[test]
+fn issue_23_written_doc_type_hover() {
+    let q2 = format!("{Q2}(new C())->find(1);\n(new D())->find(1);\n");
+    // Each needle ends with the member name; the hover is asked on its
+    // first character.
+    let cases: [(&str, &str, &[&str], &[&str]); 4] = [
+        (&q2, "(new C())->find", &["Parent text."], &[]),
+        (
+            &q2,
+            "(new D())->find",
+            &["Child text only."],
+            &["Parent text."],
+        ),
+        (
+            Q4,
+            "(new Leaf())->find",
+            &["**$id** `int`"],
+            &["positive-int"],
+        ),
+        (
+            Q3,
+            "(new Inventory([]))->items",
+            &["`list<int>`", "The items."],
+            &[],
+        ),
+    ];
+    for (content, needle, present, absent) in cases {
+        let name_start = needle.rfind("->").unwrap() as u32 + 2;
+        let markdown = hover_markdown(content, needle, name_start, 0)
+            .unwrap_or_else(|| panic!("expected a hover at {needle:?}"));
+        for text in present {
+            assert!(
+                markdown.contains(text),
+                "{needle:?}: expected {text:?} in:\n{markdown}"
+            );
+        }
+        for text in absent {
+            assert!(
+                !markdown.contains(text),
+                "{needle:?}: expected no {text:?} in:\n{markdown}"
+            );
+        }
+    }
+
+    let backend = create_test_backend_with_full_stubs();
+    let markdown = hover_markdown_on(&backend, "file:///test.php", Q1, "$it->current()", 6, 0)
+        .expect("expected a hover on ->current()");
+    assert!(markdown.contains("Foo"), "Q1 ->current(): {markdown}");
+}
+
+/// The type engine reads the decided types in the bodies and at the
+/// calls.
+///
+/// Spec: INH-001, INH-004; decisions D-01, D-03.
+#[test]
+fn issue_23_written_doc_type_type_engine() {
+    assert_var_type(Q2, "$__d1", "positive-int");
+    assert_var_type(Q2, "$__d2", "positive-int");
+    assert_var_type(Q4, "$__d1", "int");
+    assert_var_type(Q4, "$__d2", "string");
+    assert_var_type(Q3, "$__d1", "list<int>");
+    assert_var_type_on(
+        &create_test_backend_with_full_stubs(),
+        "file:///test.php",
+        Q1,
+        "$__d1",
+        "Foo",
+    );
+}
+
+/// Completion details carry the decided property types.
+///
+/// Spec: INH-014, PROP-004; decisions D-01, D-06.
+#[tokio::test]
+async fn issue_23_written_doc_type_completion() {
+    let uri = Uri::parse("file:///test.php").unwrap();
+    for (content, after, label, detail) in [
+        (D3, "(new ExplicitEqual())->", "label", "string"),
+        (D3, "(new NoDoc())->", "label", "non-empty-string"),
+        (Q3, "(new Inventory([]))->", "items", "list<int>"),
+    ] {
+        let backend = create_test_backend();
+        assert_eq!(
+            completion_detail(&backend, &uri, content, after, label)
+                .await
+                .as_deref(),
+            Some(detail),
+            "{label} after {after:?}"
+        );
+    }
+}
+
+/// Signature help shows the decided parameter types and texts.
+///
+/// Spec: INH-001, INH-004, INH-006; decisions D-01, D-03, D-04, D-10.
+#[tokio::test]
+async fn issue_23_written_doc_type_signature_help() {
+    let uri = Uri::parse("file:///test.php").unwrap();
+    for (content, call, expected) in [
+        (
+            D3,
+            "(new NoDoc())->find(",
+            &["positive-int $id", "non-empty-string $name"][..],
+        ),
+        (
+            D3,
+            "(new ExplicitEqual())->find(",
+            &["int $id", "non-empty-string $name"][..],
+        ),
+        (Q4, "(new Leaf())->find(", &["int $id"][..]),
+        (Q3, "new Inventory(", &["list<int> $items"][..]),
+    ] {
+        let backend = create_test_backend();
+        let params = signature_params(&backend, &uri, content, call).await;
+        assert_eq!(typed(&params), expected, "{call:?}");
+    }
+
+    let q2 = format!("{Q2}(new C())->find(1);\n(new D())->find(1);\n");
+    for (call, text) in [
+        ("(new C())->find(", "Parent text."),
+        ("(new D())->find(", "Child text only."),
+    ] {
+        let backend = create_test_backend();
+        let params = signature_params(&backend, &uri, &q2, call).await;
+        assert_eq!(params[0].text.as_deref(), Some(text), "{call:?}");
+    }
+}
+
+/// Classes loaded from PSR-4 files that are not open answer the same
+/// call types.
+///
+/// Spec: INH-001, INH-004; decision D-03.
+#[test]
+fn issue_23_written_doc_type_from_a_file_not_open() {
+    let files = [
+        (
+            "src/P.php",
+            "<?php\nnamespace App;\nclass P {\n    /**\n     * @param positive-int $id\n     * @param non-empty-string $name\n     * @return non-empty-string\n     */\n    public function find(int $id, string $name): string { return 'x'; }\n}\n",
+        ),
+        (
+            "src/ExplicitEqual.php",
+            "<?php\nnamespace App;\nclass ExplicitEqual extends P {\n    /**\n     * @param int $id\n     * @return string\n     */\n    public function find(int $id, string $name): string { return ''; }\n}\n",
+        ),
+        (
+            "src/NoDoc.php",
+            "<?php\nnamespace App;\nclass NoDoc extends P {\n    public function find(int $id, string $name): string { return 'x'; }\n}\n",
+        ),
+        (
+            "src/Leaf.php",
+            "<?php\nnamespace App;\nclass Leaf extends ExplicitEqual {\n    public function find(int $id, string $name): string { return ''; }\n}\n",
+        ),
+    ];
+    let (backend, dir) =
+        create_psr4_workspace(r#"{"autoload": {"psr-4": {"App\\": "src/"}}}"#, &files);
+    let main = "<?php\n$__f1 = (new \\App\\NoDoc())->find(1, 'a');\n$__f2 = (new \\App\\ExplicitEqual())->find(1, 'a');\n$__f3 = (new \\App\\Leaf())->find(1, 'a');\n";
+    let uri = Uri::from_file_path(dir.path().join("main.php")).unwrap();
+    for (var, expected) in [
+        ("$__f1", "non-empty-string"),
+        ("$__f2", "string"),
+        ("$__f3", "string"),
+    ] {
+        assert_var_type_on(&backend, uri.as_str(), main, var, expected);
+    }
+}
+
+/// The `**var**` type a property hover shows.
+fn property_hover_type(markdown: &str) -> Option<String> {
+    markdown
+        .lines()
+        .find_map(|line| line.strip_prefix("**var** `")?.strip_suffix('`'))
+        .map(str::to_string)
+}
+
+/// L1 with a read of the relationship property on each class appended.
+fn l1_with_property_reads() -> String {
+    format!("{L1}(new Author())->posts;\n(new GuestAuthor())->posts;\n")
+}
+
+/// The relationship method's record holds the type its body inferred as
+/// a doc return type, and the undocumented override inherits it.
+#[test]
+#[ignore = "issue 27: the body-inferred relationship type is not recorded as a doc return type, so the override keeps a bare HasMany"]
+fn issue_27_relationship_override_record() {
+    let backend = create_test_backend();
+    let classes = backend.parse_php(L1);
+    let posts = method(class(&classes, "Author"), "posts");
+    assert_eq!(
+        text(&posts.doc_return_type).map(|t| short(&t)).as_deref(),
+        Some("HasMany<Post>")
+    );
+    let guest = class(&classes, "GuestAuthor").clone();
+    let resolved = resolve_class_fully(&guest, &loader_of(classes));
+    let posts = method(&resolved, "posts");
+    assert_eq!(
+        text(&posts.return_type).map(|t| short(&t)).as_deref(),
+        Some("HasMany<Post>")
+    );
+}
+
+/// The hover on the override's call shows the parent's relationship type,
+/// and the relationship property has the same type on both classes.
+#[test]
+#[ignore = "issue 27: the override of a relationship method hovers as a bare HasMany"]
+fn issue_27_relationship_override_hover() {
+    let (backend, _dir, uri) = l1_workspace();
+    let content = l1_with_property_reads();
+    let markdown = hover_markdown_on(
+        &backend,
+        &uri,
+        &content,
+        "(new GuestAuthor())->posts()",
+        21,
+        0,
+    )
+    .expect("expected a hover on the override's call");
+    assert!(
+        markdown.contains("HasMany<Post>"),
+        "override call: {markdown}"
+    );
+    let property_type = |needle: &str| {
+        let name_start = needle.rfind("->").unwrap() as u32 + 2;
+        let markdown = hover_markdown_on(&backend, &uri, &content, needle, name_start, 0)
+            .unwrap_or_else(|| panic!("expected a hover at {needle:?}"));
+        property_hover_type(&markdown)
+    };
+    let on_author = property_type("(new Author())->posts;");
+    assert!(on_author.is_some(), "no type on Author's posts property");
+    assert_eq!(property_type("(new GuestAuthor())->posts;"), on_author);
+}
+
+/// The type engine gives the call through the override the parent's
+/// relationship type.
+#[test]
+#[ignore = "issue 27: a call through the override of a relationship method answers a bare HasMany"]
+fn issue_27_relationship_override_type_engine() {
+    let (backend, _dir, uri) = l1_workspace();
+    for var in ["$__l1", "$__l2"] {
+        assert_var_type_on(&backend, &uri, L1, var, "HasMany<Post>");
+    }
+}
+
+/// Completion offers `posts` with the same details on both classes.
+#[tokio::test]
+#[ignore = "issue 27: completion details of posts differ between the relationship and its override"]
+async fn issue_27_relationship_override_completion() {
+    let content = l1_with_property_reads();
+    let mut details = Vec::new();
+    for after in ["(new Author())->", "(new GuestAuthor())->"] {
+        let (backend, _dir, uri) = l1_workspace();
+        let uri = Uri::parse(&uri).unwrap();
+        let mut posts: Vec<(String, Option<String>)> =
+            completion_items(&backend, &uri, &content, after)
+                .await
+                .into_iter()
+                .filter(|item| item.label.starts_with("posts"))
+                .map(|item| (item.label, item.detail))
+                .collect();
+        posts.sort();
+        assert!(!posts.is_empty(), "no posts completion after {after:?}");
+        details.push(posts);
+    }
+    assert_eq!(details[1], details[0]);
 }
