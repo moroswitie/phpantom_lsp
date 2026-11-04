@@ -283,6 +283,7 @@ mod laravel_view_names;
 mod lsp_concurrency;
 mod lsp_refresh_resilience;
 mod lsp_registration_resilience;
+mod metadata_routes_extraction;
 mod mock_method_names;
 mod move_cli;
 mod narrowing_branch_values;
