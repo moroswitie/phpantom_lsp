@@ -6,6 +6,7 @@
 //!   (issue 17 + N1, ATTR-001 to ATTR-004).
 //! - Row B: the written doc type, and inheritance read from it (issues 23
 //!   and 27, D-03, D-04, D-06).
+//! - Row C: one `define()` recogniser (issues 6 and 8, D-13, D-14).
 //!
 //! Intended differences between routes: hover shows types and texts, a
 //! completion `detail` shows the type only, signature help shows the
@@ -18,7 +19,8 @@ use std::sync::Arc;
 use crate::common::{
     assert_var_type, assert_var_type_on, collect_diagnostics_with, completion_response,
     create_psr4_workspace, create_test_backend, create_test_backend_with_full_stubs,
-    hover_markdown, hover_markdown_on, messages_with_code, offset_position, open_php,
+    definition_locations, goto_definition_at, hover_markdown, hover_markdown_on,
+    messages_with_code, offset_position, open_php, response_labels,
 };
 use phpantom_lsp::php_type::PhpType;
 use phpantom_lsp::types::{MethodInfo, ParameterInfo, PropertyInfo};
@@ -954,4 +956,94 @@ async fn issue_27_relationship_override_completion() {
         details.push(posts);
     }
     assert_eq!(details[1], details[0]);
+}
+
+// ─── Row C: one define() recogniser (issues 6, 8) ───────────────────────────
+
+/// C3 (copied from `hover_metadata_constants.rs`): `define('\LIMIT', …)`
+/// declares a constant that no unqualified `LIMIT` reaches (D-13).
+const C3: &str = r#"<?php
+define('\\LIMIT', 1);
+echo LIMIT;
+"#;
+
+/// C4 (copied): `defined('X') or define('X', …)` (issue 6).
+const C4: &str = r#"<?php
+defined('ORX') or define('ORX', 5);
+echo ORX;
+"#;
+
+/// C5 (copied): a fully qualified `\define()` inside a namespace (issue 8).
+const C5: &str = r#"<?php
+namespace App;
+\define('GLOBAL_NAME', 20);
+echo \GLOBAL_NAME;
+"#;
+
+/// A backend with `content` open as `file:///main.php`.
+async fn open_main(content: &str) -> (Backend, Uri) {
+    let backend = create_test_backend();
+    let uri = Uri::parse("file:///main.php").unwrap();
+    open_php(&backend, &uri, content).await;
+    (backend, uri)
+}
+
+/// A constant read from either `define()` form has its value's type.
+///
+/// Decision D-14.
+#[test]
+fn issue_6_8_define_forms_type_engine() {
+    assert_var_type(&format!("{C4}$__c = ORX;\n"), "$__c", "5");
+    assert_var_type(&format!("{C5}$__g = \\GLOBAL_NAME;\n"), "$__g", "20");
+}
+
+/// Completion offers the constants either form declares, by name.
+///
+/// Decision D-14.
+#[tokio::test]
+async fn issue_6_8_define_forms_completion() {
+    for (content, after, label) in [
+        (C4, "echo OR", "ORX"),
+        (C5, "echo \\GLOBAL_", "GLOBAL_NAME"),
+    ] {
+        let (backend, uri) = open_main(content).await;
+        let offset = content.find(after).unwrap() + after.len();
+        let position = offset_position(content, offset);
+        let labels = response_labels(
+            completion_response(&backend, &uri, position.line, position.character, None).await,
+        );
+        assert!(
+            labels.iter().any(|l| l == label),
+            "{label} after {after:?}: {labels:?}"
+        );
+    }
+}
+
+/// Go-to-definition on a constant either form declares lands on the line
+/// of its `define()` call; `define('\LIMIT', …)` declares nothing an
+/// unqualified `LIMIT` reaches.
+///
+/// Decisions D-13, D-14.
+#[tokio::test]
+async fn issue_6_8_define_forms_definition() {
+    for (content, needle, delta, line) in [
+        (C4, "echo ORX", 6, Some(1)),
+        (C5, "echo \\GLOBAL_NAME", 7, Some(2)),
+        (C3, "echo LIMIT", 6, None),
+    ] {
+        let (backend, uri) = open_main(content).await;
+        let offset = content.find(needle).unwrap() + delta;
+        let position = offset_position(content, offset);
+        let found: Vec<(String, u32)> = definition_locations(
+            goto_definition_at(&backend, &uri, position.line, position.character).await,
+        )
+        .into_iter()
+        .map(|location| (location.uri.as_str().to_string(), location.range.start.line))
+        .collect();
+        let expected: Vec<(String, u32)> = line
+            .map(|line| ("file:///main.php".to_string(), line))
+            .into_iter()
+            .collect();
+        assert_eq!(found, expected, "{needle:?}");
+    }
 }
