@@ -2050,7 +2050,7 @@ class MethodTemplateDemo
         $boxed->unwrap()->write();                        // Scaffolding\Box<T>::unwrap() → Scaffolding\Pen
 
         // A `class-string<T>|T` union parameter (the Mockery::mock()
-        // shape, here nested in a variadic array hint) binds T to the
+        // shape, here on a variadic) binds T to the
         // named class itself, so a `::class` argument and an instance
         // argument both resolve to a Scaffolding\Pen instance.
         $locator->build(Scaffolding\Pen::class)->write();             // class-string<T>|T with Scaffolding\Pen::class → Scaffolding\Pen
@@ -4997,6 +4997,27 @@ class ParamClosureThisDemo
             $this->getDefaultDriver();    // resolves Router::getDefaultDriver()
         });
 
+        // A union binding offers members from both possible contexts.
+        $router->eachContext(function () {
+            // Try: $this-> offers Route::prefix() and Resource::only().
+            if ($this instanceof Scaffolding\ScaffoldingClosureThisRoute) {
+                $this->prefix('/union');  // narrowed to Route
+            } else {
+                $this->only('index');     // narrowed to Resource
+            }
+        });
+
+        $router->eachContext(function () {
+            // Try: self::next()-> offers members from both contexts.
+            self::next()->withContext(function () {
+                // The nested callback keeps both possible bindings too.
+                if ($this instanceof Scaffolding\ScaffoldingClosureThisRoute) {
+                    return;
+                }
+                $this->only('index');     // early return leaves only Resource
+            });
+        });
+
         // The tag names the base class, so an assertion is how a closure
         // body says which subclass it was actually bound to. Narrowing
         // refines the tag rather than being overruled by it.
@@ -5397,6 +5418,14 @@ $globalPen = new Scaffolding\Pen();
 function globalKeywordDemo(): void {
     global $globalPen;
     $globalPen->write();                  // Scaffolding\Pen — resolved from top-level scope via `global`
+}
+
+/**
+ * @global Scaffolding\Pencil $globalPencil Assigned in scaffolding/scaffolding.php.
+ */
+function globalTagDemo(): string {
+    global $globalPencil;
+    return $globalPencil->sketch();       // Scaffolding\Pencil — typed by the `@global` tag
 }
 
 // ── Method-Tag Template ─────────────────────────────────────────────────────

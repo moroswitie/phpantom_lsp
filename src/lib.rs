@@ -283,6 +283,7 @@ mod lsp_dispatch;
 mod mago;
 #[cfg(feature = "mem-audit")]
 mod mem_audit;
+mod mock_methods;
 pub mod move_cli;
 pub(crate) mod names;
 mod parallel;
@@ -431,13 +432,14 @@ pub struct BackendState {
     /// handler also verifies that the captured text is still current before
     /// updating shared maps.
     pub(crate) did_change_parse_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
-    /// The last open file `update_ast` parsed, kept for the diagnostic
-    /// pass its edit schedules, keyed by URI.
+    /// The last open file `update_ast` parsed, keyed by URI, kept for the
+    /// diagnostic pass its edit schedules and the requests against the same
+    /// text until the next edit.
     ///
-    /// One slot rather than one per file: only the file being typed in is
-    /// diagnosed right after its parse, and the parse of a large file
-    /// holds tens of megabytes.
-    pub(crate) parsed_for_diagnostics: Mutex<Option<(String, crate::parser::ParsedFile)>>,
+    /// One slot rather than one per file: the file being typed in is the
+    /// one diagnosed and queried right after its parse, and the parse of a
+    /// large file holds tens of megabytes.
+    pub(crate) kept_parse: Mutex<Option<(String, Arc<crate::parser::ParsedFile>)>>,
     /// Coalescing state for expensive whole-file requests. See
     /// [`WholeFileCoalesce`] for why this exists.
     pub(crate) whole_file_coalesce: Arc<WholeFileCoalesce>,
@@ -532,8 +534,14 @@ pub struct BackendState {
     /// [`crate::composer::is_yii_project`].  Starts `true` so a workspace with
     /// no `composer.json` to classify behaves as before.
     pub(crate) is_yii: Arc<std::sync::atomic::AtomicBool>,
+    /// The major version of PHPUnit the project's `composer.lock` installs,
+    /// `0` when it is not known.  In a workspace of several projects, the
+    /// lowest of theirs.  Decides whether a data provider has to be static.
+    pub(crate) phpunit_major: Arc<std::sync::atomic::AtomicU8>,
     /// The Yii path aliases the project's configuration declares.
     pub(crate) yii: yii::YiiState,
+    /// The files that fire or use a WordPress hook.
+    pub(crate) wordpress_hooks: wordpress::hooks::HookFiles,
     /// The `Pest.php` files of the project's test directories, read on
     /// first use and dropped when one is saved.  `None` until then.
     pub(crate) pest_configs: Arc<RwLock<Option<pest::PestConfigs>>>,

@@ -14,7 +14,8 @@ use crate::virtual_members::resolve_class_fully_maybe_cached;
 
 use super::context::resolved_to_arcs;
 use super::{
-    ResolutionCtx, resolve_static_owner_class, resolve_target_classes, resolve_target_classes_expr,
+    ResolutionCtx, resolve_static_owner_classes, resolve_target_classes,
+    resolve_target_classes_expr,
 };
 
 /// Whether every non-null member of `ty` is the bare `string` type.
@@ -63,6 +64,10 @@ pub(crate) enum SubjectOutcome {
         /// How `classes` group into the alternatives of the subject's
         /// type.
         branches: UnionBranches,
+        /// The type each of `classes` was resolved from, generic arguments
+        /// included (`Builder<App\Models\Order>`), index for index.  Empty
+        /// for a synthetic `stdClass`.
+        types: Vec<PhpType>,
     },
     /// Subject resolved to a scalar type — member access is always a
     /// runtime crash.  The `PhpType` is the resolved scalar type
@@ -212,14 +217,15 @@ pub(crate) fn resolve_subject_outcome(
     let resolved = resolve_target_classes(subject, access_kind, ctx);
     if !resolved.is_empty() {
         // ── Check for class-bearing entries ──────────────────────
-        let arced: Vec<Arc<ClassInfo>> = resolved
+        let (arced, types): (Vec<Arc<ClassInfo>>, Vec<PhpType>) = resolved
             .iter()
-            .filter_map(|rt| rt.class_info.clone())
-            .collect();
+            .filter_map(|rt| Some((rt.class_info.clone()?, rt.type_string.clone())))
+            .unzip();
         if !arced.is_empty() {
             return SubjectOutcome::Resolved {
                 branches: UnionBranches::of(&resolved),
                 classes: arced,
+                types,
             };
         }
 
@@ -256,6 +262,7 @@ pub(crate) fn resolve_subject_outcome(
             return SubjectOutcome::Resolved {
                 classes: vec![synthetic],
                 branches: UnionBranches::default(),
+                types: Vec::new(),
             };
         }
 
@@ -293,6 +300,7 @@ pub(crate) fn resolve_subject_outcome(
                     ..ClassInfo::default()
                 })],
                 branches: UnionBranches::default(),
+                types: Vec::new(),
             };
         }
         // Try unresolvable class detection for function calls.
@@ -309,15 +317,19 @@ pub(crate) fn resolve_subject_outcome(
     // For property chains, check the property's type hint.
     if let SubjectExpr::PropertyChain { base, property } = &expr {
         let base_arcs = resolved_to_arcs(resolve_target_classes_expr(base, access_kind, ctx));
+        let names = super::variable_subjects::resolve_dynamic_member_names(property, ctx);
         for cls in &base_arcs {
             let merged = resolve_class_fully_maybe_cached(
                 cls,
                 ctx.file.class_loader,
                 ctx.resolved_class_cache,
             );
-            if let Some(parsed) =
-                resolve_property_type_hint(&merged, property, ctx.file.class_loader)
-            {
+            let hints: Vec<PhpType> = names
+                .iter()
+                .filter_map(|name| resolve_property_type_hint(&merged, name, ctx.file.class_loader))
+                .collect();
+            if !hints.is_empty() {
+                let parsed = PhpType::union(hints);
                 if parsed.all_members_primitive_scalar() {
                     let scalar = parsed.non_null_type().unwrap_or(parsed);
                     if access_kind != AccessKind::DoubleColon || !is_all_string_type(&scalar) {
@@ -412,8 +424,8 @@ fn declared_call_return_type(
         }
         // Static method call: Foo::getInt()
         SubjectExpr::StaticMethodCall { class, method } => {
-            let cls = resolve_static_owner_class(class, ctx);
-            declared_return_type_of(cls.as_slice(), method, ctx, accept)
+            let classes = resolve_static_owner_classes(class, ctx);
+            declared_return_type_of(&classes, method, ctx, accept)
         }
         _ => None,
     }

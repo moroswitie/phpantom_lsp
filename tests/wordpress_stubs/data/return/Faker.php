@@ -46,18 +46,18 @@ assertType('non-empty-array<string, string>', Faker::nonEmptyArray(Faker::string
 
 // Unions
 assertType('bool', Faker::union(Faker::bool()));
-assertType('bool|int', Faker::union(Faker::bool(), Faker::int())); // SKIP: a variadic template parameter binds only the first argument
-assertType('bool|int|string', Faker::union(Faker::bool(), Faker::int(), Faker::string())); // SKIP: a variadic template parameter binds only the first argument
-assertType('array<int, int>|bool|int|string', Faker::union(Faker::bool(), Faker::int(), Faker::string(), Faker::intArray(Faker::int()))); // SKIP: a variadic template parameter binds only the first argument
-assertType('array<int|string, int|string>', Faker::union(Faker::intArray(Faker::int()), Faker::strArray(Faker::string()))); // SKIP: a variadic template parameter binds only the first argument
-assertType('array<int|string>', Faker::union(Faker::array(Faker::int()), Faker::strArray(Faker::string()))); // SKIP: a variadic template parameter binds only the first argument
-assertType('array<mixed>', Faker::union(Faker::array(), Faker::strArray()));
-assertType('array<mixed>', Faker::union(Faker::array(), Faker::intArray()));
-assertType('string|null', Faker::union(Faker::string(), null)); // SKIP: a variadic template parameter binds only the first argument
-assertType("'bar'|'foo'", Faker::union('foo', 'bar')); // SKIP: a variadic template parameter binds only the first argument
-assertType('string', Faker::union('foo', Faker::string())); // SKIP: a variadic template parameter binds only the first argument
-assertType("'foo'|int", Faker::union('foo', Faker::int())); // SKIP: a variadic template parameter binds only the first argument
-assertType("array{'baz'}|array{foo: 'bar'}", Faker::union(['foo' => 'bar'], ['baz'])); // SKIP: a variadic template parameter binds only the first argument
+assertType('bool|int', Faker::union(Faker::bool(), Faker::int()));
+assertType('bool|int|string', Faker::union(Faker::bool(), Faker::int(), Faker::string()));
+assertType('array<int, int>|bool|int|string', Faker::union(Faker::bool(), Faker::int(), Faker::string(), Faker::intArray(Faker::int())));
+assertType('array<int, int>|array<string, string>', Faker::union(Faker::intArray(Faker::int()), Faker::strArray(Faker::string()))); // PHPantom keeps the array types apart where PHPStan merges them
+assertType('array<array-key, int>|array<string, string>', Faker::union(Faker::array(Faker::int()), Faker::strArray(Faker::string()))); // PHPantom keeps the array types apart where PHPStan merges them
+assertType('array<array-key, mixed>', Faker::union(Faker::array(), Faker::strArray())); // PHPantom spells `array<mixed>` with its key type
+assertType('array<array-key, mixed>', Faker::union(Faker::array(), Faker::intArray())); // PHPantom spells `array<mixed>` with its key type
+assertType('string|null', Faker::union(Faker::string(), null));
+assertType("'bar'|'foo'", Faker::union('foo', 'bar'));
+assertType('string', Faker::union('foo', Faker::string()));
+assertType("'foo'|int", Faker::union('foo', Faker::int()));
+assertType("array{'baz'}|array{foo: 'bar'}", Faker::union(['foo' => 'bar'], ['baz']));
 
 // Intersections
 assertType('lowercase-string', Faker::intersection(Faker::string(), Faker::lowercaseString()));

@@ -141,7 +141,8 @@ impl Backend {
                     &var_name,
                     FileCtx::new(content, &ctx.classes, &resolved_class_loader, &class_loader)
                         .with_imports(Some(&ctx.use_map))
-                        .with_backend(Some(self)),
+                        .with_backend(Some(self))
+                        .with_uri(ctx.uri.as_deref()),
                     current_class,
                     cursor_offset,
                 )
@@ -206,8 +207,7 @@ fn variable_definition_hover(
         VarDefKind::Catch => VariableDefinitionHover::ShowVariable,
         VarDefKind::StaticDecl if hover_on_declarations => VariableDefinitionHover::ShowVariable,
         VarDefKind::StaticDecl => VariableDefinitionHover::Suppress,
-        VarDefKind::GlobalDecl if hover_on_declarations => VariableDefinitionHover::ShowVariable,
-        VarDefKind::GlobalDecl => VariableDefinitionHover::Suppress,
+        VarDefKind::GlobalDecl => VariableDefinitionHover::ShowVariable,
         VarDefKind::ArrayDestructuring => VariableDefinitionHover::ShowVariable,
         VarDefKind::ListDestructuring => VariableDefinitionHover::ShowVariable,
         VarDefKind::ClosureCapture => VariableDefinitionHover::Suppress,
@@ -374,7 +374,7 @@ mod tests {
             (VarDefKind::Foreach, ShowVariable),
             (VarDefKind::Catch, ShowVariable),
             (VarDefKind::StaticDecl, Suppress),
-            (VarDefKind::GlobalDecl, Suppress),
+            (VarDefKind::GlobalDecl, ShowVariable),
             (VarDefKind::ArrayDestructuring, ShowVariable),
             (VarDefKind::ListDestructuring, ShowVariable),
             (VarDefKind::ClosureCapture, Suppress),
@@ -385,7 +385,7 @@ mod tests {
         let switched_on = |kind: &VarDefKind, is_promoted: bool, off| match kind {
             VarDefKind::Parameter if is_promoted => ShowProperty,
             VarDefKind::Property => ShowProperty,
-            VarDefKind::StaticDecl | VarDefKind::GlobalDecl => ShowVariable,
+            VarDefKind::StaticDecl => ShowVariable,
             _ => off,
         };
         for is_promoted in [false, true] {

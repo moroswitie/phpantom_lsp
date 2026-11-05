@@ -81,6 +81,7 @@ impl Backend {
                 member_name,
                 is_static,
                 is_method_call,
+                docblock_ref,
                 ..
             } => {
                 let access_kind = AccessKind::of_member_access(*is_static);
@@ -88,13 +89,21 @@ impl Backend {
                 let rctx = loaders.resolution_ctx_at(content, offset);
 
                 let source = self.symbol_map_source(uri, content)?;
-                let candidates = ResolvedType::into_arced_classes(
+                let mut candidates = ResolvedType::into_arced_classes(
                     crate::type_engine::resolver::resolve_target_classes(
                         subject_text.as_str(source),
                         access_kind,
                         &rctx,
                     ),
                 );
+
+                if *docblock_ref == crate::symbol_map::DocblockMemberRef::MockedMethod {
+                    candidates = crate::mock_methods::mocked_classes(
+                        candidates,
+                        *is_static,
+                        &resolved_class_loader,
+                    );
+                }
 
                 // Resolve the member's return type / property type.
                 self.resolve_member_type(
@@ -112,14 +121,17 @@ impl Backend {
                     .map(|cc| vec![PhpType::named(cc.fqn())])
                     .unwrap_or_default(),
                 SelfStaticParentKind::This => {
-                    if let Some(override_cls) =
-                        self.resolve_closure_this_override(uri, content, offset)
-                    {
-                        vec![PhpType::named(override_cls.fqn())]
-                    } else {
+                    let bound = self.resolve_closure_this_types(uri, content, offset);
+                    if bound.is_empty() {
                         current_class
                             .map(|cc| vec![PhpType::named(cc.fqn())])
                             .unwrap_or_default()
+                    } else {
+                        bound
+                            .iter()
+                            .filter_map(|rt| rt.class_info.as_ref())
+                            .map(|cls| PhpType::named(cls.fqn()))
+                            .collect()
                     }
                 }
                 SelfStaticParentKind::Parent => current_class
@@ -313,7 +325,8 @@ fn resolve_variable_type_names(
             name,
             FileCtx::new(content, &ctx.classes, class_loader, source_class_loader)
                 .with_imports(Some(&ctx.use_map))
-                .with_backend(backend),
+                .with_backend(backend)
+                .with_uri(ctx.uri.as_deref()),
             current_class,
             cursor_offset,
         )

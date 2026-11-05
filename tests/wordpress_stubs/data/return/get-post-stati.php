@@ -22,6 +22,6 @@ assertType('array<string, stdClass>', get_post_stati([], 'Hello'));
 assertType('array<string, string>|array<string, stdClass>', get_post_stati([], Faker::string())); // PHPantom keeps the array types apart where PHPStan merges them
 
 // Unions
-assertType('array<string, stdClass|string>', get_post_stati([], Faker::union('names', 'objects'))); // SKIP: a variadic template parameter binds only the first argument
+assertType('array<string, string>|array<string, stdClass>', get_post_stati([], Faker::union('names', 'objects'))); // PHPantom keeps the array types apart where PHPStan merges them
 assertType('array<string, string>|array<string, stdClass>', get_post_stati([], Faker::union(Faker::string(), 'names'))); // PHPantom keeps the array types apart where PHPStan merges them
 assertType('array<string, string>|array<string, stdClass>', get_post_stati([], Faker::union(Faker::string(), 'objects'))); // PHPantom keeps the array types apart where PHPStan merges them

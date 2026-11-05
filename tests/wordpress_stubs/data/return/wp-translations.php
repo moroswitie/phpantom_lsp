@@ -20,4 +20,4 @@ assertType('null', $translations->translate_plural(null, null));
 assertType('string', $translations->translate_plural($string, null));
 assertType('null', $translations->translate_plural(null, $string));
 assertType('string', $translations->translate_plural($string, $string));
-assertType('string|null', $translations->translate_plural($singular, $string)); // SKIP: a variadic template parameter binds only the first argument
+assertType('string|null', $translations->translate_plural($singular, $string));

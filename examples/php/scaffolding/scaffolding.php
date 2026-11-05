@@ -846,7 +846,8 @@ class ScaffoldingEventBus
     {
         $params = (new \ReflectionFunction($callback))->getParameters();
         $type = $params[0]->getType();
-        $class = $type instanceof \ReflectionNamedType ? $type->getName() : 'stdClass';
+        $name = $type instanceof \ReflectionNamedType ? $type->getName() : '';
+        $class = class_exists($name) ? $name : \stdClass::class;
         return (new \ReflectionClass($class))->newInstanceWithoutConstructor();
     }
 }
@@ -862,7 +863,8 @@ class ScaffoldingBatchProcessor
     {
         $params = (new \ReflectionFunction($handler))->getParameters();
         $type = $params[1]->getType();
-        $class = $type instanceof \ReflectionNamedType ? $type->getName() : 'stdClass';
+        $name = $type instanceof \ReflectionNamedType ? $type->getName() : '';
+        $class = class_exists($name) ? $name : \stdClass::class;
         return (new \ReflectionClass($class))->newInstanceWithoutConstructor();
     }
 }
@@ -953,6 +955,14 @@ class ScaffoldingPipeline
 // binds the callback with Closure::call() so the runtime matches the tag.
 class ScaffoldingClosureThisRoute
 {
+    public static function next(): self { return new self(); }
+
+    /** @param-closure-this self $callback */
+    public function withContext(\Closure $callback): void
+    {
+        $callback->call($this);
+    }
+
     public function middleware(string $m): self { return $this; }
     public function prefix(string $p): self { return $this; }
 
@@ -967,6 +977,14 @@ class ScaffoldingClosureThisRoute
 
 class ScaffoldingClosureThisResource
 {
+    public static function next(): self { return new self(); }
+
+    /** @param-closure-this self $callback */
+    public function withContext(\Closure $callback): void
+    {
+        $callback->call($this);
+    }
+
     public function only(string $action): self { return $this; }
 }
 
@@ -987,6 +1005,15 @@ class ScaffoldingClosureThisRouter
     public function group(\Closure $callback): void
     {
         $callback->call(new ScaffoldingClosureThisRoute());
+    }
+
+    /**
+     * @param-closure-this ScaffoldingClosureThisRoute|ScaffoldingClosureThisResource $callback
+     */
+    public function eachContext(\Closure $callback): void
+    {
+        $callback->call(new ScaffoldingClosureThisRoute());
+        $callback->call(new ScaffoldingClosureThisResource());
     }
 
     /**
@@ -1882,7 +1909,7 @@ class ServiceLocator
 
     /**
      * @template T of object
-     * @param array<class-string<T>|T|array<T>> ...$args
+     * @param class-string<T>|T|array<T> ...$args
      * @return T
      */
     public function build(mixed ...$args): object
@@ -2960,3 +2987,9 @@ abstract class ScaffoldingHoverContract
 {
     abstract public function describe(): string;
 }
+
+// ── @global tag scaffolding ─────────────────────────────────────────────────
+
+// The global `globalTagDemo()` in completion.php imports. It is assigned in
+// this file, not that one, so only the function's `@global` tag types it.
+$globalPencil = new Pencil();

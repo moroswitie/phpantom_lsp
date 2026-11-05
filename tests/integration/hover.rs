@@ -1466,6 +1466,43 @@ function draw(Pen $tool): void {
     );
 }
 
+/// The variable a `global` statement imports shows the type it gets there,
+/// whether it comes from the function's `@global` tag, a `@var` above the
+/// statement, or the file's top level.
+#[test]
+fn hover_active_on_global_statement_variable() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let content = r#"<?php
+class Foo {}
+class Bar {}
+class Baz {}
+$top = new Baz();
+/** @global Foo $x */
+function f(): void
+{
+    global $x;
+    /** @var Bar $y */
+    global $y;
+    global $top;
+}
+"#;
+
+    for (line, col, var, ty) in [
+        (8, 12, "$x", "Foo"),
+        (10, 12, "$y", "Bar"),
+        (11, 12, "$top", "Baz"),
+    ] {
+        let hover = hover_at(&backend, uri, content, line, col)
+            .unwrap_or_else(|| panic!("hover should be active on `global {var}`"));
+        let text = hover_text(&hover);
+        assert!(
+            text.contains(&format!("{var} = {ty}")),
+            "hover on `global {var}` should show {ty}: {text}"
+        );
+    }
+}
+
 #[test]
 fn hover_active_on_foreach_variable_definition_site() {
     let backend = create_test_backend();
@@ -10521,17 +10558,18 @@ fn hover_inline_var_cast_applies_to_array_element_assignment() {
     let content = r#"<?php
 class Test {
     public function run(): void {
+        $row = [];
         /** @var string */
-        $GLOBALS['sql_query'] = rand(0, 1) ? 'asd' : null;
-        echo $GLOBALS;
+        $row['sql_query'] = rand(0, 1) ? 'asd' : null;
+        echo $row;
     }
 }
 "#;
 
-    // Hover on `$GLOBALS` after the annotated array-element assignment —
-    // the @var override should type the element as `string`, not the
-    // RHS's own `'asd'|null`.
-    let hover = hover_at(&backend, uri, content, 5, 14).expect("expected hover on $GLOBALS");
+    // Hover on `$row` after the annotated array-element assignment: the
+    // @var override should type the element as `string`, not the RHS's own
+    // `'asd'|null`.
+    let hover = hover_at(&backend, uri, content, 6, 14).expect("expected hover on $row");
     let text = hover_text(&hover);
     assert!(
         text.contains("sql_query: string"),
@@ -11557,6 +11595,61 @@ class Consumer {
     assert!(
         !text.contains("mixed"),
         "Should NOT show mixed when conditional resolves to a concrete class, got: {}",
+        text
+    );
+}
+
+#[test]
+fn hover_reads_the_last_of_repeated_phpstan_return_tags() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let content = r#"<?php
+class Post {}
+
+/**
+ * @return Post[]|int[]
+ * @phpstan-return ($args is array{fields: 'ids', ...} ? int[] : Post[])
+ * @phpstan-return ($args is array{fields: 'id=>parent'|'ids', ...} ? array<int, int> : array<int, Post>)
+ */
+function get_posts($args = null) {}
+
+function test(): void {
+    $ids = get_posts(['fields' => 'id=>parent']);
+    $ids;
+}
+"#;
+
+    let hover = hover_at(&backend, uri, content, 12, 5).expect("expected hover on $ids");
+    let text = hover_text(&hover);
+    assert!(
+        text.contains("array<int, int>"),
+        "The last @phpstan-return should win, got: {}",
+        text
+    );
+}
+
+#[test]
+fn hover_reads_the_last_of_repeated_phpstan_param_tags() {
+    let backend = create_test_backend();
+    let uri = "file:///test.php";
+    let content = r#"<?php
+class Category {}
+
+/**
+ * @param array $args
+ * @phpstan-param array<int, string> $args
+ * @phpstan-param list<Category> $args
+ */
+function get_categories($args) {
+    $args;
+}
+"#;
+
+    let hover = hover_at(&backend, uri, content, 9, 5).expect("expected hover on $args");
+    let text = hover_text(&hover);
+    assert!(
+        text.contains("list<Category>"),
+        "The last @phpstan-param should win, got: {}",
         text
     );
 }
@@ -15723,7 +15816,7 @@ fn hover_class_constant_array_keyed_by_class_constant() {
     let hover = hover_at(&backend, uri, content, 7, 10).expect("hover $b");
     let text = hover_text(&hover);
     assert!(
-        text.contains(r"array{'App\\Widget': 'X', stdClass: 'Y'}"),
+        text.contains(r"array{App\Widget::class: 'X', stdClass::class: 'Y'}"),
         "the constant should keep its class-name keys, got: {text}"
     );
 }
@@ -15922,7 +16015,7 @@ fn hover_object_cast_of_a_non_empty_array_keeps_stdclass() {
     let hover = hover_at(&backend, uri, content, 3, 6).expect("hover $obj");
     let text = hover_text(&hover);
     assert!(
-        text.contains("object{foo: int}") && text.contains("stdClass"),
+        text.contains("object{foo: 1}") && text.contains("stdClass"),
         "a non-empty array cast to object should keep stdClass alongside the shape, got: {text}"
     );
 }
@@ -17446,4 +17539,101 @@ function f(Base $b): void {
         hover_at(&backend, "file:///test.php", content, 17, 5).expect("expected hover on $v");
     let text = hover_text(&hover);
     assert!(text.contains("Leaf"), "{text}");
+}
+
+#[test]
+fn hover_call_after_var_retype_ignores_earlier_argument_call() {
+    let backend = create_test_backend();
+    let content = r#"<?php
+/** @template T */
+class Box { /** @return T */ public function get() {} }
+
+function make(): mixed { return null; }
+
+/** @var Box<int> $box */
+$box = make();
+strlen($box->get());
+
+/** @var Box<string> $box */
+$box = make();
+$result = $box->get();
+"#;
+    assert_eq!(
+        crate::common::assigned_type(&backend, "file:///test.php", content, "$result"),
+        "string"
+    );
+}
+
+#[test]
+fn hover_param_closure_this_union() {
+    let backend = create_test_backend();
+    let content = "<?php\nclass FirstContext {}\nclass SecondContext {}\n/** @param-closure-this FirstContext|SecondContext $callback */\nfunction bindContext(\\Closure $callback): void {}\nbindContext(function () { $this; });\n";
+    let hover = hover_at(&backend, "file:///closure_union_hover.php", content, 5, 27)
+        .expect("expected hover on union-bound $this");
+    let text = hover_text(&hover);
+    assert!(text.contains("FirstContext|SecondContext"), "{text}");
+}
+
+#[test]
+fn hover_param_closure_this_intersection() {
+    let backend = create_test_backend();
+    let content = "<?php\nclass FirstContext {}\ninterface SecondContext {}\n/** @param-closure-this FirstContext&SecondContext $callback */\nfunction bindContext(\\Closure $callback): void {}\nbindContext(function () { $this; });\n";
+    let hover = hover_at(
+        &backend,
+        "file:///closure_intersection_hover.php",
+        content,
+        5,
+        27,
+    )
+    .expect("expected hover on intersection-bound $this");
+    let text = hover_text(&hover);
+    assert!(text.contains("FirstContext&SecondContext"), "{text}");
+}
+
+#[test]
+fn hover_static_call_assigned_in_bound_closure_binds_static_to_the_bound_class() {
+    let backend = create_test_backend();
+    let content = "<?php\nclass Foo { public static function make(): static { return new static(); } }\nclass Host { public function run(): void {\n bindContext(function () { $made = static::make(); $made; });\n} }\n/** @param-closure-this Foo $callback */\nfunction bindContext(\\Closure $callback): void {}\n";
+    let hover = hover_at(
+        &backend,
+        "file:///closure_this_static_assign.php",
+        content,
+        3,
+        53,
+    )
+    .expect("expected hover on $made");
+    let text = hover_text(&hover);
+    assert!(text.contains("Foo"), "{text}");
+    assert!(!text.contains("Host"), "{text}");
+}
+
+/// `->__invoke()` and `->call()` on a value typed with a closure signature
+/// return the signature's return type, nullsafe or not.
+#[test]
+fn hover_closure_signature_invoke_returns_signature_return_type() {
+    let backend = create_test_backend_with_full_stubs();
+    let uri = "file:///closure_invoke.php";
+    let content = r#"<?php
+class Foo {}
+class Holder {
+    /**
+     * @param \Closure(int): Foo $cb
+     * @param (\Closure(): Foo)|null $then
+     */
+    public function run(\Closure $cb, ?\Closure $then, \Closure $plain): void {
+        $invoked = $cb->__invoke(1);
+        $called = $cb->call($this, 1);
+        $maybe = $then?->__invoke();
+        $untyped = $plain->__invoke();
+        $invoked; $called; $maybe; $untyped;
+    }
+}
+"#;
+    let hover = |character| {
+        hover_text(&hover_at(&backend, uri, content, 12, character).expect("hover")).to_string()
+    };
+    assert!(hover(9).contains("$invoked = Foo"), "{}", hover(9));
+    assert!(hover(19).contains("$called = Foo"), "{}", hover(19));
+    assert!(hover(28).contains("$maybe = ?Foo"), "{}", hover(28));
+    assert!(hover(36).contains("$untyped = mixed"), "{}", hover(36));
 }

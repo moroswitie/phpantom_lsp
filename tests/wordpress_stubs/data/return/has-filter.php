@@ -9,8 +9,8 @@ use function has_filter;
 use function PHPStan\Testing\assertType;
 
 // Default callback of false
-assertType('bool', has_filter('')); // SKIP: a default written `\true`, `\false` or `\null` is not read
-assertType('bool', has_action('')); // SKIP: a default written `\true`, `\false` or `\null` is not read
+assertType('bool', has_filter(''));
+assertType('bool', has_action(''));
 
 // Explicit callback of false
 assertType('bool', has_filter('', false));

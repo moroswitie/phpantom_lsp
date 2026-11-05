@@ -16,16 +16,16 @@ use function wp_get_archives;
 use function PHPStan\Testing\assertType;
 
 // Default value of true
-assertType('null', wp_get_archives()); // SKIP: `void` from a conditional return type is not read as `null`
+assertType('null', wp_get_archives());
 
 // Explicit value of true|1
-assertType('null', wp_get_archives(['echo' => true, 'key' => 'value'])); // SKIP: an array-shape condition matches any array
-assertType('null', wp_get_archives(['echo' => 1, 'key' => 'value'])); // SKIP: an array-shape condition matches any array
+assertType('null', wp_get_archives(['echo' => true, 'key' => 'value']));
+assertType('null', wp_get_archives(['echo' => 1, 'key' => 'value']));
 
 // Explicit value of false|0
-assertType('string|null', wp_get_archives(['echo' => false, 'key' => 'value'])); // SKIP: `void` from a conditional return type is not read as `null`
-assertType('string|null', wp_get_archives(['echo' => 0, 'key' => 'value'])); // SKIP: `void` from a conditional return type is not read as `null`
+assertType('string|null', wp_get_archives(['echo' => false, 'key' => 'value']));
+assertType('string|null', wp_get_archives(['echo' => 0, 'key' => 'value']));
 
 // Unknown value
-assertType('string|null', wp_get_archives(['echo' => Faker::bool(), 'key' => 'value'])); // SKIP: `void` from a conditional return type is not read as `null`
-assertType('string|null', wp_get_archives(['echo' => Faker::int(), 'key' => 'value'])); // SKIP: `void` from a conditional return type is not read as `null`
+assertType('string|null', wp_get_archives(['echo' => Faker::bool(), 'key' => 'value']));
+assertType('string|null', wp_get_archives(['echo' => Faker::int(), 'key' => 'value']));

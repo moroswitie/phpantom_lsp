@@ -1680,6 +1680,35 @@ function runDemoAssertions(): void
     $ctExt = $ctRouter->extend('redis', function () {});
     assert($ctExt instanceof Scaffolding\ScaffoldingClosureThisRouter, 'Router::extend() must return self');
 
+    $ctContexts = [];
+    $ctRouter->eachContext(function () use (&$ctContexts) {
+        if ($this instanceof Scaffolding\ScaffoldingClosureThisRoute) {
+            $ctContexts[] = $this->prefix('/union');
+        } else {
+            $ctContexts[] = $this->only('index');
+        }
+    });
+    assert(count($ctContexts) === 2, 'eachContext() must invoke both union alternatives');
+    assert($ctContexts[0] instanceof Scaffolding\ScaffoldingClosureThisRoute);
+    assert($ctContexts[1] instanceof Scaffolding\ScaffoldingClosureThisResource);
+
+    $ctChainedContexts = [];
+    $ctRemainingContexts = [];
+    $ctRouter->eachContext(function () use (&$ctChainedContexts, &$ctRemainingContexts) {
+        $ctChainedContexts[] = self::next();
+        self::next()->withContext(function () use (&$ctRemainingContexts) {
+            if ($this instanceof Scaffolding\ScaffoldingClosureThisRoute) {
+                return;
+            }
+            $ctRemainingContexts[] = $this->only('index');
+        });
+    });
+    assert(count($ctChainedContexts) === 2);
+    assert($ctChainedContexts[0] instanceof Scaffolding\ScaffoldingClosureThisRoute);
+    assert($ctChainedContexts[1] instanceof Scaffolding\ScaffoldingClosureThisResource);
+    assert(count($ctRemainingContexts) === 1, 'early return must exclude the Route binding');
+    assert($ctRemainingContexts[0] instanceof Scaffolding\ScaffoldingClosureThisResource);
+
     // Nested @param-closure-this: the innermost binding is the one in
     // effect, and the inner call's receiver is the outer binding.
     $ctInner = null;
@@ -2013,6 +2042,9 @@ function runDemoAssertions(): void
     global $globalPen;
     assert($globalPen instanceof Scaffolding\Pen, '$globalPen must be Scaffolding\Pen at top level');
     globalKeywordDemo();
+    global $globalPencil;
+    assert($globalPencil instanceof Scaffolding\Pencil, '$globalPencil must be Scaffolding\Pencil');
+    assert(is_string(globalTagDemo()), 'globalTagDemo() reads the @global-typed Pencil');
 
     // ── Built-in generic collections ────────────────────────────────────
     $demo = new BuiltinGenericCollectionDemo();

@@ -29,7 +29,7 @@ assertType('int<0, max>', edit_link(Faker::int()));
 /*
  * wp_insert_link()
  */
-assertType('int<0, max>', wp_insert_link([])); // SKIP: a default written `\true`, `\false` or `\null` is not read
+assertType('int<0, max>', wp_insert_link([]));
 assertType('int<0, max>', wp_insert_link([], false));
 assertType('int<0, max>|WP_Error', wp_insert_link([], true));
 assertType('int<0, max>|WP_Error', wp_insert_link([], Faker::bool()));
@@ -50,7 +50,7 @@ assertType("object{link_url: string, link_name: string, link_visible: 'Y'}&stdCl
 /*
  * wp_get_link_cats()
  */
-assertType('array{}', wp_get_link_cats()); // SKIP: a condition over an integer range, a refined string, `numeric`, `empty`, `resource` or an array key type is misjudged
-assertType('array{}', wp_get_link_cats(0)); // SKIP: a condition over an integer range, a refined string, `numeric`, `empty`, `resource` or an array key type is misjudged
+assertType('array{}', wp_get_link_cats());
+assertType('array{}', wp_get_link_cats(0));
 assertType('array<int, int<1, max>>', wp_get_link_cats(123));
 assertType('array<int, int<1, max>>', wp_get_link_cats(Faker::int()));

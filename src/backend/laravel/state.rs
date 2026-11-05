@@ -94,6 +94,14 @@ pub(crate) struct LaravelState {
     /// `$user->can()`, `$this->authorize()`, and `@can` check.  Empty for
     /// non-Laravel projects.  See [`virtual_members::laravel::gates`].
     pub(crate) gates: RwLock<laravel::LaravelGateIndex>,
+    /// Middleware aliases and groups: the framework's defaults, an HTTP
+    /// kernel's, the ones `bootstrap/app.php` configures, and the ones a
+    /// service provider registers on the router.  Built during
+    /// `initialized` for Laravel projects and refreshed when a registering
+    /// file changes.  Powers completion, hover, go-to-definition, and the
+    /// unknown-middleware diagnostic for `->middleware('auth')`.  Empty for
+    /// non-Laravel projects.  See [`virtual_members::laravel::middleware`].
+    pub(crate) middleware: RwLock<laravel::LaravelMiddlewareIndex>,
     /// Config keys the project declares at runtime rather than in a
     /// `config/` file (`Config::set()`, the array form of the `config()`
     /// helper, `Storage::fake()`), keyed by the file each write is written
@@ -128,6 +136,13 @@ pub(crate) struct LaravelState {
     ///
     /// [`build_laravel_date_class`]: crate::Backend::build_laravel_date_class
     pub(crate) date_seed_uris: RwLock<HashSet<String>>,
+    /// Whether the app turns on Eloquent's missing-attribute exception
+    /// (`Model::preventAccessingMissingAttributes()` or
+    /// `Model::shouldBeStrict()`) in a service provider, which makes an
+    /// unknown model attribute an error rather than a `null` read.  Found by
+    /// the same scan as [`date_class`](Self::date_class), whose seed files
+    /// are the ones that can change it.
+    pub(crate) strict_attributes: std::sync::atomic::AtomicBool,
     /// What the project's registered service providers register: container
     /// bindings, package config files, view and translation directories, route
     /// files, and Blade component namespaces, merged across every provider.
@@ -169,11 +184,13 @@ impl LaravelState {
             commands: GatedIndex::default(),
             morph_map: RwLock::default(),
             gates: RwLock::default(),
+            middleware: RwLock::default(),
             runtime_config_keys: RwLock::default(),
             macro_seeds: RwLock::default(),
             macro_mixin_uris: RwLock::default(),
             date_class: RwLock::new(None),
             date_seed_uris: RwLock::default(),
+            strict_attributes: std::sync::atomic::AtomicBool::new(false),
             provider_resources: RwLock::default(),
             provider_scans: RwLock::default(),
             string_key_cache: RwLock::default(),

@@ -63,6 +63,15 @@ pub(super) fn resolve_binary_result_type<'b>(
         return Some(vec![ResolvedType::from_type_string(folded)]);
     }
 
+    if let Some(result) = fold_identity_comparison(binary, ctx) {
+        let folded = if result {
+            PhpType::true_()
+        } else {
+            PhpType::false_()
+        };
+        return Some(vec![ResolvedType::from_type_string(folded)]);
+    }
+
     // instanceof, comparison, logical: always bool.
     if binary.operator.is_instanceof()
         || binary.operator.is_comparison()
@@ -117,28 +126,10 @@ pub(super) fn resolve_binary_result_type<'b>(
         }
         // `&`, `|` and `^` are the ones PHP overloads for strings; a shift
         // always produces an int.
-        if matches!(op, BitwiseOp::And | BitwiseOp::Or | BitwiseOp::Xor) {
-            let both_strings = !lhs_types.is_empty()
-                && !rhs_types.is_empty()
-                && lhs_types
-                    .iter()
-                    .all(|rt| rt.type_string.is_subtype_of(&PhpType::string()))
-                && rhs_types
-                    .iter()
-                    .all(|rt| rt.type_string.is_subtype_of(&PhpType::string()));
-            if both_strings {
-                return Some(vec![ResolvedType::from_type_string(PhpType::string())]);
-            }
-            // Two operands nobody typed decide nothing: the same operator
-            // produces a string from two strings and an int from two
-            // numbers, and a `mixed` could be either. The honest answer is
-            // the pair — benevolent, because it is a gap in what the code
-            // said rather than a value measured to be two things.
-            if operand_is_undecided(&lhs_types) && operand_is_undecided(&rhs_types) {
-                return Some(vec![ResolvedType::from_type_string(PhpType::benevolent(
-                    PhpType::union(vec![PhpType::int(), PhpType::string()]),
-                ))]);
-            }
+        if matches!(op, BitwiseOp::And | BitwiseOp::Or | BitwiseOp::Xor)
+            && let Some(ty) = string_overload_result(&lhs_types, &rhs_types)
+        {
+            return Some(vec![ResolvedType::from_type_string(ty)]);
         }
         // A mask built from constants (`$flags = JSON_PRETTY_PRINT |
         // JSON_THROW_ON_ERROR`) keeps its value, so a call that is handed it
@@ -525,9 +516,10 @@ pub(crate) fn infer_addition_result_type(
     if rhs_is_array && (lhs_is_array || lhs_types.is_empty()) {
         // An operand with no tracked type still gets everything the array
         // beside it contributes: `+` only accepts arrays, so whatever it
-        // held was one too.
+        // held was one too. A declared bare `array` would instead keep the
+        // result as unknown as itself.
         let lhs_type = if lhs_types.is_empty() {
-            PhpType::array()
+            PhpType::mixed()
         } else {
             ResolvedType::types_joined(lhs_types)
         };
@@ -573,6 +565,50 @@ pub(crate) fn infer_modulo_result_type(
             .unwrap_or_else(PhpType::int),
         _ => PhpType::int(),
     }
+}
+
+/// The result of `&`, `|` or `^` when the operands do not settle it as an
+/// int, or `None` when they do.
+///
+/// PHP works byte by byte, producing a string, only when both operands are
+/// strings. Two operands nobody typed decide nothing: the same operator
+/// produces a string from two strings and an int from two numbers, and a
+/// `mixed` could be either. The honest answer is the pair, benevolent
+/// because it is a gap in what the code said rather than a value measured
+/// to be two things. An operand that is already that benevolent pair (an
+/// earlier `$a | $b`, or `$a |= $b` on untyped operands) is just as
+/// undecided, so a chain keeps the answer.
+fn string_overload_result(
+    lhs_types: &[ResolvedType],
+    rhs_types: &[ResolvedType],
+) -> Option<PhpType> {
+    let all_strings = |types: &[ResolvedType]| {
+        !types.is_empty()
+            && types
+                .iter()
+                .all(|rt| rt.type_string.is_subtype_of(&PhpType::string()))
+    };
+    if all_strings(lhs_types) && all_strings(rhs_types) {
+        return Some(PhpType::string());
+    }
+    let undecided = PhpType::benevolent(PhpType::union(vec![PhpType::int(), PhpType::string()]));
+    let is_undecided = |types: &[ResolvedType]| {
+        operand_is_undecided(types) || types.iter().any(|rt| rt.type_string == undecided)
+    };
+    (is_undecided(lhs_types) && is_undecided(rhs_types)).then_some(undecided)
+}
+
+/// Infer what `&=`, `|=` or `^=` leaves in its target: the overloaded
+/// number class when a side is one; otherwise the operands decide it the
+/// way they decide the binary operator, and anything they do not settle
+/// is an int.
+pub(crate) fn infer_bitwise_assignment_result_type(
+    lhs_types: &[ResolvedType],
+    rhs_types: &[ResolvedType],
+) -> PhpType {
+    overloaded_number_result(lhs_types, rhs_types, true)
+        .or_else(|| string_overload_result(lhs_types, rhs_types))
+        .unwrap_or_else(PhpType::int)
 }
 
 /// The bitwise operator `operator` is, or `None` for every other binary
@@ -762,6 +798,72 @@ fn fold_literal_comparison(
         BinaryOperator::NotIdentical(_) => !same_kind || ordering != Ordering::Equal,
         _ => return None,
     })
+}
+
+/// `===` or `!==` between two operands that each hold only known scalars,
+/// or `None` when the answer depends on the value. Two such operands with
+/// no value in common are never identical, which is how
+/// `$protocol === 'HTTP/1'` is seen to be `false` when `$protocol` is one
+/// of `'HTTP/1.0'|'HTTP/1.1'`. One side must be cheap to resolve, and is
+/// resolved first, so a comparison of two calls, or of a call with a value
+/// that is not a known scalar, resolves at most one call.
+fn fold_identity_comparison<'b>(
+    binary: &'b Binary<'b>,
+    ctx: &VarResolutionCtx<'_>,
+) -> Option<bool> {
+    let identical = match binary.operator {
+        BinaryOperator::Identical(_) => true,
+        BinaryOperator::NotIdentical(_) => false,
+        _ => return None,
+    };
+    let (cheap, other) = if scalar_fold::is_cheap_scalar_operand(binary.rhs) {
+        (binary.rhs, binary.lhs)
+    } else if scalar_fold::is_cheap_scalar_operand(binary.lhs) {
+        (binary.lhs, binary.rhs)
+    } else {
+        return None;
+    };
+    let cheap_values = known_scalars(&resolve_rhs_expression(cheap, ctx))?;
+    let other_values = known_scalars(&resolve_rhs_expression(other, ctx))?;
+    let equal = if cheap_values
+        .iter()
+        .all(|value| !other_values.contains(value))
+    {
+        false
+    } else if let ([a], [b]) = (cheap_values.as_slice(), other_values.as_slice())
+        && a == b
+    {
+        true
+    } else {
+        return None;
+    };
+    Some(equal == identical)
+}
+
+/// Every value a resolved operand can hold, when each is one known scalar.
+/// `None` for an operand that admits any other value, or is unresolved.
+fn known_scalars(types: &[ResolvedType]) -> Option<Vec<scalar_fold::Scalar>> {
+    fn collect(ty: &PhpType, out: &mut Vec<scalar_fold::Scalar>) -> Option<()> {
+        match ty.kind() {
+            TypeKind::Union(members) => members.iter().try_for_each(|member| collect(member, out)),
+            TypeKind::Nullable(inner) => {
+                out.push(scalar_fold::Scalar::Null);
+                collect(inner, out)
+            }
+            _ => {
+                out.push(scalar_fold::Scalar::from_type(ty)?);
+                Some(())
+            }
+        }
+    }
+    if types.is_empty() {
+        return None;
+    }
+    let mut values = Vec::new();
+    for resolved in types {
+        collect(&resolved.type_string, &mut values)?;
+    }
+    Some(values)
 }
 
 fn literal_int(value: i64) -> PhpType {

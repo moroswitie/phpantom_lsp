@@ -338,6 +338,13 @@ pub(crate) fn process_assignment_expr<'b>(
         let condition_proofs =
             condition_implications(&lhs_name, assignment.rhs, &rhs_types, scope, ctx);
         let ternary_proofs = ternary_arm_implications(&lhs_name, assignment.rhs, scope, ctx);
+        // `$write = function () use (&$out) { … };` — remember which
+        // closure `$write` holds, so `$write();` can run its body.  Read
+        // before the write: `use ($write)` copies the old value.
+        let held_closure = match crate::parser::unwrap_parens(assignment.rhs) {
+            Expression::Closure(closure) => held_closure_of(closure, scope),
+            _ => None,
+        };
         // Reassigning the variable replaces its object identity, so any
         // property/array-access key rooted at it (seeded by an earlier
         // assignment or condition narrowing) is now stale.  Drop them
@@ -378,6 +385,9 @@ pub(crate) fn process_assignment_expr<'b>(
             // be anything". Neither is a type this walk lost, so the
             // entry is the plain unknown a join treats as top.
             scope.set_untyped(&lhs_name);
+        }
+        if let Some(held) = held_closure {
+            scope.set_held_closure(&lhs_name, held);
         }
         // `$isHtml = $raw instanceof HtmlString` makes `$isHtml` stand
         // for the check, so testing it later narrows `$raw`.
@@ -753,6 +763,20 @@ fn normalize_void_assignment(mut resolved: Vec<ResolvedType>) -> Vec<ResolvedTyp
         if rt.type_string.is_void() {
             rt.type_string = PhpType::null();
             rt.class_info = None;
+        } else if let TypeKind::Union(members) = rt.type_string.kind()
+            && members.iter().any(PhpType::is_void)
+        {
+            let members = members
+                .iter()
+                .map(|m| {
+                    if m.is_void() {
+                        PhpType::null()
+                    } else {
+                        m.clone()
+                    }
+                })
+                .collect();
+            rt.type_string = PhpType::union(members).simplified();
         }
     }
     resolved

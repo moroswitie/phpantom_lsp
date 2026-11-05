@@ -1,9 +1,9 @@
 //! Declaration hover for local `static` and `global` declarations.
 //!
-//! With the switch off each of them answers `None`, exactly as before.
-//! With it on, a `static $name` or `global $name` declaration answers
-//! the ordinary variable hover: the type the shared resolver gives the
-//! variable there, or the plain `$name` when it gives none. Closure
+//! A `static $name` declaration answers the ordinary variable hover when
+//! the switch is on. A `global $name` import answers it in either mode:
+//! the type the shared resolver gives the variable there, or the plain
+//! `$name` when it gives none. Closure
 //! `use (...)` captures, docblock `@param` / `@var` names and `unset`
 //! keep answering `None`, and every other variable definition keeps
 //! the hover it had.
@@ -72,6 +72,24 @@ fn assert_off_on(content: &str, search: &str, token: &str, expected: &str) {
         Some(range),
         "hover on {token} should cover exactly that token"
     );
+}
+
+fn assert_hover_both_modes(content: &str, search: &str, token: &str, expected: &str) {
+    let range = range_of_token(content, search, token);
+    let (line, character) = inside(range);
+    for enabled in [false, true] {
+        let backend = create_test_backend().with_hover_on_declarations(enabled);
+        let hover = hover_at(&backend, "file:///test.php", content, line, character)
+            .unwrap_or_else(|| {
+                panic!("global import {token} should hover with declarations {enabled}")
+            });
+        assert_eq!(hover_text(&hover), expected, "hover on {token}");
+        assert_eq!(
+            hover.range,
+            Some(range),
+            "hover on {token} should cover exactly that token"
+        );
+    }
 }
 
 /// The markdown of a variable hover showing `code`.
@@ -171,7 +189,7 @@ function work(): void
 
 #[test]
 fn global_declaration_shows_the_top_level_type() {
-    assert_off_on(
+    assert_hover_both_modes(
         GLOBALS,
         "global $db, $missing",
         "$db",
@@ -181,7 +199,7 @@ fn global_declaration_shows_the_top_level_type() {
 
 #[test]
 fn global_declaration_of_an_unassigned_variable_shows_the_plain_variable() {
-    assert_off_on(
+    assert_hover_both_modes(
         GLOBALS,
         "global $db, $missing",
         "$missing",
@@ -191,7 +209,7 @@ fn global_declaration_of_an_unassigned_variable_shows_the_plain_variable() {
 
 #[test]
 fn global_declaration_shows_its_var_docblock_type() {
-    assert_off_on(
+    assert_hover_both_modes(
         GLOBALS,
         "global $log",
         "$log",

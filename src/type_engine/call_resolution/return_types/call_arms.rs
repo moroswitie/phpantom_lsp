@@ -56,6 +56,24 @@ impl Backend {
             return classes;
         }
 
+        // `->__invoke()` / `->call()` on a closure signature returns what
+        // the signature says, which the `Closure` class cannot know.
+        if crate::type_engine::call_resolution::is_closure_invoke_call(method_name)
+            && let Some(ty) =
+                crate::type_engine::call_resolution::closure_invoke_return(&lhs_resolved)
+        {
+            let classes = crate::type_engine::type_resolution::type_hint_to_classes_typed_returned(
+                &ty,
+                "",
+                ctx.file.all_classes,
+                ctx.file.class_loader,
+            );
+            if let Some(ref mut hint_out) = return_type_hint_out {
+                **hint_out = Some(ty);
+            }
+            return classes;
+        }
+
         // Guard-aware auth user model: a `user()` call on a
         // `Guard`/`Request` subtype resolves to the model
         // configured for the guard named at the call site
@@ -189,63 +207,16 @@ impl Backend {
                     // empty even though the classes resolve fine,
                     // silently dropping the winning branch's shape
                     // (e.g. an intersection) from the hint.
-                    let substituted = resolve_conditional_return_hint(
+                    let substituted = method_call_return_hint(
                         m,
-                        text_args,
-                        Some(&var_resolver),
-                        &template_subs,
-                        crate::type_engine::conditional_resolution::ConditionalClassContext {
-                            calling: ctx.current_class.map(|c| c.fqn().as_str()),
-                            declaring: None,
-                            written_class: Some(&written),
-                        },
                         &merged,
-                        ctx.file.class_loader,
-                    )
-                    .or_else(|| {
-                        m.return_type.as_ref().map(|ret| {
-                            if !template_subs.is_empty() {
-                                ret.substitute(&template_subs)
-                            } else {
-                                ret.clone()
-                            }
-                        })
-                    });
+                        text_args,
+                        &template_subs,
+                        &var_resolver,
+                        &written,
+                        ctx,
+                    );
                     if let Some(substituted) = substituted {
-                        // Collapse any conditional nested inside the
-                        // return type (e.g. `Collection<($k is
-                        // array|string ? array-key : TGroupKey), …>`)
-                        // against this call's arguments.  The hint
-                        // becomes the receiver type of the next link
-                        // in the chain, so a conditional left raw here
-                        // ends up bound to a class-level template
-                        // parameter and is later compared against an
-                        // argument as an uninhabited type expression.
-                        let substituted = if substituted.contains_conditional() {
-                            let arg_ty_resolver = |t: &str| Self::resolve_arg_text_to_type(t, ctx);
-                            let tpl = TemplateContext {
-                                defaults: Some(&template_subs),
-                                params: m.template_params(),
-                                bindings: m.template_bindings(),
-                                arg_type_resolver: Some(&arg_ty_resolver),
-                                this_type: None,
-                            };
-                            crate::type_engine::conditional_resolution::evaluate_nested_conditionals_text(
-                                &substituted,
-                                &m.parameters,
-                                text_args,
-                                Some(&var_resolver),
-                                crate::type_engine::conditional_resolution::ConditionalClassContext {
-                                    calling: ctx.current_class.map(|c| c.fqn().as_str()),
-                                    declaring: Some(merged.fqn().as_str()),
-                                    written_class: Some(&written),
-                                },
-                                ctx.file.class_loader,
-                                &tpl,
-                            )
-                        } else {
-                            substituted
-                        };
                         // Resolve self/static/parent keywords to
                         // concrete class names so that downstream
                         // consumers see real FQNs, not keywords.
@@ -304,51 +275,46 @@ impl Backend {
         mut return_type_hint_out: Option<&mut Option<PhpType>>,
     ) -> Vec<Arc<ClassInfo>> {
         let written = |name: &str| ctx.written_names().resolve_class(name);
-        let owner_class = if class.starts_with('$') {
+        let all_owners: Vec<Arc<ClassInfo>> = if class.starts_with('$') {
             // Variable holding a class-string (e.g. `$cls::make()`).
             // May resolve to multiple classes for union class-strings.
-            let all_owners: Vec<Arc<ClassInfo>> = ResolvedType::into_arced_classes(
-                crate::type_engine::resolver::resolve_target_classes(
-                    class,
-                    AccessKind::DoubleColon,
-                    ctx,
-                ),
-            );
-            // When there are multiple possible classes, resolve the
-            // method return type through each and union the results.
-            if all_owners.len() > 1 {
-                let mut union_results: Vec<Arc<ClassInfo>> = Vec::new();
-                for owner in &all_owners {
-                    let split_args = split_top_level_commas(text_args);
-                    let arg_refs = split_args.to_vec();
-                    let template_subs =
-                        Self::build_method_template_subs(owner, method_name, &arg_refs, ctx);
-                    let var_resolver = build_var_resolver(ctx);
-                    let mr_ctx = MethodReturnCtx::for_call(
-                        ctx,
-                        &template_subs,
-                        &var_resolver,
-                        &written,
-                        true,
-                    );
-                    ClassInfo::extend_unique_arc(
-                        &mut union_results,
-                        Self::resolve_method_return_types_with_args(
-                            owner,
-                            method_name,
-                            text_args,
-                            &mr_ctx,
-                        ),
-                    );
-                }
-                if !union_results.is_empty() {
-                    return union_results;
-                }
-            }
-            all_owners.into_iter().next()
+            ResolvedType::into_arced_classes(crate::type_engine::resolver::resolve_target_classes(
+                class,
+                AccessKind::DoubleColon,
+                ctx,
+            ))
         } else {
-            crate::type_engine::resolver::resolve_static_owner_class(class, ctx)
+            // `self::`/`static::` inside a closure bound to a union names
+            // every alternative.
+            crate::type_engine::resolver::resolve_static_owner_classes(class, ctx)
         };
+        // When there are multiple possible classes, resolve the method
+        // return type through each and union the results.
+        if all_owners.len() > 1 {
+            let mut union_results: Vec<Arc<ClassInfo>> = Vec::new();
+            for owner in &all_owners {
+                let split_args = split_top_level_commas(text_args);
+                let arg_refs = split_args.to_vec();
+                let template_subs =
+                    Self::build_method_template_subs(owner, method_name, &arg_refs, ctx);
+                let var_resolver = build_var_resolver(ctx);
+                let mr_ctx =
+                    MethodReturnCtx::for_call(ctx, &template_subs, &var_resolver, &written, true);
+                ClassInfo::extend_unique_arc(
+                    &mut union_results,
+                    Self::resolve_method_return_types_with_args(
+                        owner,
+                        method_name,
+                        text_args,
+                        &mr_ctx,
+                    ),
+                );
+            }
+            if !union_results.is_empty() {
+                return union_results;
+            }
+        }
+        let owner_class = all_owners.into_iter().next();
 
         if let Some(ref owner) = owner_class {
             // A static call through a Laravel facade is typed by the
@@ -384,18 +350,16 @@ impl Backend {
 
             if let Some(ref mut hint_out) = return_type_hint_out
                 && let Some(m) = merged.get_method_ci(method_name)
-                && let Some(ref ret) = m.return_type
+                && let Some(substituted) = method_call_return_hint(
+                    m,
+                    &merged,
+                    text_args,
+                    &template_subs,
+                    &build_var_resolver(ctx),
+                    &written,
+                    ctx,
+                )
             {
-                // Bind the method's own @template params from the
-                // call-site arguments before the hint travels on as
-                // the receiver of the next link in the chain.  A
-                // factory declared `@return static<array-key, T>`
-                // otherwise hands the next call a raw `T`.
-                let substituted = if template_subs.is_empty() {
-                    ret.clone()
-                } else {
-                    ret.substitute(&template_subs)
-                };
                 // Resolve self/static/parent keywords to concrete
                 // class names (mirrors instance path). Only the
                 // `static`/`self` name is replaced, so
@@ -531,28 +495,59 @@ impl Backend {
         if let Some(fl) = ctx.function_loader
             && let Some(func_info) = fl(func_name, 0)
         {
-            if func_info.conditional_return.is_some()
-                || crate::type_engine::type_ops::call_site_returns::has_call_site_return(func_name)
-            {
+            let call_site_name =
+                crate::type_engine::type_ops::call_site_returns::call_site_name(&func_info);
+            if func_info.conditional_return.is_some() || call_site_name.is_some() {
                 let var_resolver = build_var_resolver(ctx);
                 // `is <Type>` conditions on an argument that isn't a
                 // literal (`preg_replace($p, $r, $subject)`) are
                 // decided by the argument's resolved type, so the
                 // branch a call takes matches what it was handed.
                 let arg_ty_resolver = |t: &str| Self::resolve_arg_text_to_type(t, ctx);
-                let resolved_type = func_info
+                // A function whose arguments decide its result
+                // (`json_encode(…, JSON_THROW_ON_ERROR)` never returning
+                // `false`, `filter_var()` returning what its filter
+                // produces, `wp_parse_args()` merging two shapes) is
+                // decided at the call site, more closely than its
+                // conditional can say.
+                let call_site = call_site_name.and_then(|name| {
+                    crate::type_engine::type_ops::call_site_returns::call_site_return_type(
+                        name,
+                        &func_info.parameters,
+                        text_args,
+                        func_info.return_type.as_ref(),
+                        Some(&arg_ty_resolver),
+                    )
+                });
+                let resolved_type = call_site.or_else(|| func_info
                     .conditional_return
                     .as_ref()
                     .and_then(|cond| {
                         if text_args.is_empty() {
                             return resolve_conditional_without_args(cond, &func_info.parameters);
                         }
+                        // A condition over a template is judged by what the
+                        // arguments bound it to.
+                        let subs = (!func_info.template_bindings.is_empty()).then(|| {
+                            let arg_texts: Vec<String> = split_top_level_commas(text_args)
+                                .into_iter()
+                                .map(str::to_string)
+                                .collect();
+                            crate::type_engine::conditional_resolution::template_subs_within_bounds(
+                                crate::type_engine::variable::rhs_resolution::build_function_template_subs(
+                                    &func_info, &arg_texts, None, ctx,
+                                ),
+                                &func_info.template_param_bounds,
+                                ctx.file.class_loader,
+                            )
+                        });
                         let tpl = TemplateContext {
                             defaults: None,
                             params: &func_info.template_params,
                             bindings: &func_info.template_bindings,
                             arg_type_resolver: Some(&arg_ty_resolver),
                             this_type: None,
+                            subs: subs.as_ref(),
                         };
                         resolve_conditional_with_text_args_and_defaults(
                             cond,
@@ -567,21 +562,7 @@ impl Backend {
                             ctx.file.class_loader,
                             &tpl,
                         )
-                    })
-                    // A builtin whose arguments decide its result
-                    // (`json_encode(…, JSON_THROW_ON_ERROR)` never
-                    // returning `false`, `filter_var()` returning what
-                    // its filter produces) is decided the same way: at
-                    // the call site.
-                    .or_else(|| {
-                        crate::type_engine::type_ops::call_site_returns::call_site_return_type(
-                            func_name,
-                            &func_info.parameters,
-                            text_args,
-                            func_info.return_type.as_ref()?,
-                            Some(&arg_ty_resolver),
-                        )
-                    });
+                    }));
                 if let Some(parsed_ty) = resolved_type {
                     // The winning branch can name a function-level
                     // `@template` (`tap()` returns `TValue`), which
@@ -970,7 +951,8 @@ impl Backend {
         } = callee
             && let SubjectExpr::StaticMethodCall { class, method } = from_callable.as_ref()
             && method.eq_ignore_ascii_case("fromCallable")
-            && crate::type_engine::resolver::resolve_static_owner_class(class, ctx)
+            && crate::type_engine::resolver::resolve_static_owner_classes(class, ctx)
+                .first()
                 .is_some_and(|owner| owner.fqn() == "Closure")
             && let Some(classes) = Self::return_types_of_invoked_first_arg(
                 args_text,
@@ -1035,4 +1017,76 @@ impl Backend {
 
         callee_classes
     }
+}
+
+/// The return type a call to `m`, declared on `owner`, hands on as its hint:
+/// the conditional `@return` decided by the call's arguments, else the
+/// declared return type, with the call's template bindings substituted and
+/// any conditional nested inside it collapsed.
+///
+/// The hint becomes the receiver of the next link in a chain, or the type of
+/// an argument binding the enclosing call's templates, so a conditional left
+/// raw here would be read as an uninhabited type expression or widened to
+/// the method's native return type.
+fn method_call_return_hint(
+    m: &MethodInfo,
+    owner: &ClassInfo,
+    text_args: &str,
+    template_subs: &HashMap<String, PhpType>,
+    var_resolver: &dyn Fn(&str) -> Vec<String>,
+    written: &dyn Fn(&str) -> String,
+    ctx: &ResolutionCtx<'_>,
+) -> Option<PhpType> {
+    let substituted = resolve_conditional_return_hint(
+        m,
+        text_args,
+        Some(var_resolver),
+        template_subs,
+        crate::type_engine::conditional_resolution::ConditionalClassContext {
+            calling: ctx.current_class.map(|c| c.fqn().as_str()),
+            declaring: None,
+            written_class: Some(written),
+        },
+        owner,
+        ctx.file.class_loader,
+    )
+    .or_else(|| {
+        m.return_type.as_ref().map(|ret| {
+            if template_subs.is_empty() {
+                ret.clone()
+            } else {
+                ret.substitute(template_subs)
+            }
+        })
+    })?;
+    // Collapse any conditional nested inside the return type (e.g.
+    // `Collection<($k is array|string ? array-key : TGroupKey), …>`)
+    // against this call's arguments.
+    if !substituted.contains_conditional() {
+        return Some(substituted);
+    }
+    let arg_ty_resolver = |t: &str| Backend::resolve_arg_text_to_type(t, ctx);
+    let tpl = TemplateContext {
+        defaults: Some(template_subs),
+        params: m.template_params(),
+        bindings: m.template_bindings(),
+        arg_type_resolver: Some(&arg_ty_resolver),
+        this_type: None,
+        subs: None,
+    };
+    Some(
+        crate::type_engine::conditional_resolution::evaluate_nested_conditionals_text(
+            &substituted,
+            &m.parameters,
+            text_args,
+            Some(var_resolver),
+            crate::type_engine::conditional_resolution::ConditionalClassContext {
+                calling: ctx.current_class.map(|c| c.fqn().as_str()),
+                declaring: Some(owner.fqn().as_str()),
+                written_class: Some(written),
+            },
+            ctx.file.class_loader,
+            &tpl,
+        ),
+    )
 }

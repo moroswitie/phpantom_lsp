@@ -70,7 +70,7 @@ The full schema is at [`config-schema.json`](https://github.com/PHPantom-dev/php
 | `extra-arguments`          | bool   | `false` | Report calls that pass more arguments than the function accepts. |
 | `report-magic-properties`  | bool   | `false` | Report unknown property access on classes with `__get` when virtual properties are defined. Matches PHPStan's `reportMagicProperties`. |
 | `partial-union-members`    | bool   | `false` | Report a member access on a union when only some of its classes declare the member. Matches PHPStan's `checkUnionTypes`. |
-| `downgrade-nullable-argument-mismatch` | bool | `false` | Downgrade `type_mismatch_argument` to a warning when the only reason an argument fails to satisfy the parameter is a stray `null` (every non-null member of the argument's type is already compatible). |
+| `possibly-empty-mismatches` | bool | `false` | Report a type mismatch on an argument, return value or property assignment when the only members that fail are `null` or `false`, such as a `string\|false` passed to a `string` parameter. Matches PHPStan's `checkUnionTypes` and `checkNullables`. |
 | `workspace`                | bool   | `false` | Compute diagnostics for the whole workspace in the background after startup, so problems appear for files you have not opened. Costs a project-wide sweep every session. Requires the default `full` indexing strategy. |
 | `workspace-external`       | bool   | `true`  | Run configured external tools (PHPStan, PHPCS, PHPMD, Mago) once over the whole project after workspace diagnostics finish. Only takes effect when `workspace` is enabled. |
 
@@ -97,7 +97,7 @@ message = "^Call to deprecated function some_legacy_helper\\(\\)"
 | ------------ | -------- | -------- | ----------- |
 | `strategy`   | string   | `"full"` | Class discovery strategy: `"full"`, `"composer"`, `"self"`, or `"none"`. See [Indexing Strategy](#indexing-strategy) below. |
 | `exclude`    | string[] | `[]`     | Paths the workspace scanners skip, in gitignore syntax relative to the workspace root: a bare name matches at any depth, a pattern containing `/` anchors to the root, a trailing `/` restricts to directories, and a leading `!` re-includes. Applies to background discovery, to the classes Composer's autoload maps list, and to the directories `analyze` walks. A file you open in the editor, or name outright on the `analyze` command line, is always served. A leading `!` only undoes your own patterns, so use `include` to bring back a hidden, gitignored, or built-in skipped path. |
-| `extensions` | string[] | `[]`     | Extra file extensions (without the dot) treated as PHP source during workspace discovery, e.g. `["module", "inc", "theme"]` for Drupal. `.php` is always included. |
+| `extensions` | string[] | `[]`     | Extra file extensions (without the dot) treated as PHP source during workspace discovery, e.g. `["module", "inc", "theme"]`. `.php` is always included, and a Drupal site gets Drupal's extensions automatically. |
 | `include`    | string[] | `[]`     | Files and directories to index even though the workspace scan skips them, relative to the workspace root unless absolute. See [Extra Include Paths](#extra-include-paths) below. |
 
 ```toml
@@ -230,6 +230,15 @@ highlighting remains in charge of ordinary PHP syntax.
 | `"full"` | Emit the complete semantic token stream, including ordinary classes, variables, functions, methods, properties, comments, keywords, attributes, and Blade tokens. |
 | `"off"` | Return no semantic tokens. |
 
+### `[inlay_hints]`
+
+| Key               | Type | Default | Description |
+| ----------------- | ---- | ------- | ----------- |
+| `parameter-names` | bool | `true`  | Parameter names before the arguments of a call, such as `needle:`, along with the `&` of a by-reference parameter. |
+| `closure-types`   | bool | `true`  | Inferred parameter and return types on closures and arrow functions that do not declare them. |
+
+Your editor can switch these off too, see [Editor-supplied inlay hint toggles](#editor-supplied-inlay-hint-toggles). Editing this section takes effect in open files without a restart.
+
 ### `[formatting]`
 
 | Key            | Type    | Default | Description |
@@ -342,7 +351,7 @@ It is read from `initializationOptions` and `workspace/didChangeConfiguration`, 
 
 With hover on declarations, hovering a class, interface, trait or enum (its name or its keyword), a method, a property (a promoted constructor property included), a class constant, an enum case, a function or a top-level constant at the place it is declared, or the name in a `@property` or `@method` tag, shows the same hover as hovering a use of it, inherited documentation included. It is meant for clients that navigate to declarations rather than usages, such as AI coding agents; editor users see no change. It is off by default.
 
-A local `static` or `global` declaration shows the variable's type, the same as hovering a read of the variable.
+A local `static` declaration shows the variable's type, the same as hovering a read of the variable. Variables imported by `global` show their types in either mode.
 
 Turn it on for a session with the `hover.declarations` initialization option:
 
@@ -351,6 +360,18 @@ Turn it on for a session with the `hover.declarations` initialization option:
 ```
 
 The same shape is accepted under a `phpantom` key. It is read only during `initialize`, never from `workspace/didChangeConfiguration`; a missing, non-object or non-boolean value counts as not set. The server can also be started with `--hover-on-declarations` (see [cli.md](cli.md)). The feature is on when either route turns it on, and nothing turns it back off. The browser (WASM) build does not support it: it never reads `initializationOptions` and has no command line, so the option is ignored there.
+
+## Editor-supplied inlay hint toggles
+
+An editor extension can offer its own switches for the `[inlay_hints]` kinds and pass them the same way:
+
+```json
+{ "inlayHints": { "parameterNames": false, "closureTypes": true } }
+```
+
+It is read from `initializationOptions` and `workspace/didChangeConfiguration`, also under a `phpantom` key, and a notification without an `inlayHints` block leaves the toggles as they are. A key left out has no opinion. When a toggle changes, PHPantom asks the editor to re-request the hints of open files, so the change shows at once.
+
+A kind is shown only when neither `.phpantom.toml` nor the editor turns it off. Editors send their default `true` along with every other setting, so an editor's `true` never brings back a kind the config file switched off.
 
 ## Code Formatting
 

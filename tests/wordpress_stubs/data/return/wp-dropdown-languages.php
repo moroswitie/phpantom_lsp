@@ -19,22 +19,22 @@ $emptyStringOrNull = Faker::union('', null);
 $stringOrNull = Faker::union(Faker::string(), null);
 
 // Default value
-assertType('string', wp_dropdown_languages()); // SKIP: an array-shape condition matches any array
-assertType('string', wp_dropdown_languages(['selected' => ''])); // SKIP: an array-shape condition matches any array
+assertType('string', wp_dropdown_languages());
+assertType('string', wp_dropdown_languages(['selected' => '']));
 
 // Void return type
-assertType('null', wp_dropdown_languages(['id' => $emptyStringOrNull, 'selected' => ''])); // SKIP: `void` from a conditional return type is not read as `null`
-assertType('null', wp_dropdown_languages(['name' => $emptyStringOrNull, 'selected' => ''])); // SKIP: `void` from a conditional return type is not read as `null`
-assertType('null', wp_dropdown_languages(['id' => $emptyStringOrNull, 'name' => $emptyStringOrNull, 'selected' => ''])); // SKIP: `void` from a conditional return type is not read as `null`
+assertType('null', wp_dropdown_languages(['id' => $emptyStringOrNull, 'selected' => '']));
+assertType('null', wp_dropdown_languages(['name' => $emptyStringOrNull, 'selected' => '']));
+assertType('null', wp_dropdown_languages(['id' => $emptyStringOrNull, 'name' => $emptyStringOrNull, 'selected' => '']));
 
 // string return type
-assertType('string', wp_dropdown_languages(['id' => 'nonEmptyString', 'selected' => ''])); // SKIP: an array-shape condition matches any array
-assertType('string', wp_dropdown_languages(['name' => 'nonEmptyString', 'selected' => ''])); // SKIP: an array-shape condition matches any array
-assertType('string', wp_dropdown_languages(['id' => 'nonEmptyString', 'name' => 'nonEmptyString', 'selected' => ''])); // SKIP: an array-shape condition matches any array
+assertType('string', wp_dropdown_languages(['id' => 'nonEmptyString', 'selected' => '']));
+assertType('string', wp_dropdown_languages(['name' => 'nonEmptyString', 'selected' => '']));
+assertType('string', wp_dropdown_languages(['id' => 'nonEmptyString', 'name' => 'nonEmptyString', 'selected' => '']));
 
 // Unknown value
-assertType('string|null', wp_dropdown_languages(['id' => $stringOrNull, 'selected' => ''])); // SKIP: an array-shape condition matches any array
-assertType('string|null', wp_dropdown_languages(['name' => $stringOrNull, 'selected' => ''])); // SKIP: an array-shape condition matches any array
-assertType('string|null', wp_dropdown_languages(['id' => $stringOrNull, 'name' => $stringOrNull, 'selected' => ''])); // SKIP: an array-shape condition matches any array
-assertType('string|null', wp_dropdown_languages(['id' => 'nonEmptyString', 'name' => $stringOrNull, 'selected' => ''])); // SKIP: an array-shape condition matches any array
-assertType('string|null', wp_dropdown_languages(['id' => $stringOrNull, 'name' => 'nonEmptyString', 'selected' => ''])); // SKIP: an array-shape condition matches any array
+assertType('string|null', wp_dropdown_languages(['id' => $stringOrNull, 'selected' => '']));
+assertType('string|null', wp_dropdown_languages(['name' => $stringOrNull, 'selected' => '']));
+assertType('string|null', wp_dropdown_languages(['id' => $stringOrNull, 'name' => $stringOrNull, 'selected' => '']));
+assertType('string|null', wp_dropdown_languages(['id' => 'nonEmptyString', 'name' => $stringOrNull, 'selected' => '']));
+assertType('string|null', wp_dropdown_languages(['id' => $stringOrNull, 'name' => 'nonEmptyString', 'selected' => '']));

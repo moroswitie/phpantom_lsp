@@ -41,4 +41,4 @@ $post = Faker::mixed();
 if ($post === null) {
     wp_die();
 }
-assertType('WP_Post', $post); // SKIP: an array-shape condition matches any array, so `wp_die()` with its default arguments is read as returning
+assertType('WP_Post', $post);

@@ -15,6 +15,7 @@ use std::sync::Arc;
 ///
 /// Rules:
 ///   - Leading `\` — strip it and return (already fully-qualified).
+///   - Leading `namespace\` — the rest, relative to the current namespace.
 ///   - Unqualified (no `\`):
 ///     1. Check the `use_map` for a direct mapping.
 ///     2. Prefix with the current namespace.
@@ -33,6 +34,18 @@ pub(crate) fn resolve_to_fqn(
 ) -> String {
     if let Some(stripped) = name.strip_prefix('\\') {
         return stripped.to_string();
+    }
+
+    const NAMESPACE_RELATIVE: &str = "namespace\\";
+    if name.len() > NAMESPACE_RELATIVE.len()
+        && name.as_bytes()[..NAMESPACE_RELATIVE.len()]
+            .eq_ignore_ascii_case(NAMESPACE_RELATIVE.as_bytes())
+    {
+        let relative = &name[NAMESPACE_RELATIVE.len()..];
+        return match namespace {
+            Some(ns) => format!("{ns}\\{relative}"),
+            None => relative.to_string(),
+        };
     }
 
     if !name.contains('\\') {
@@ -233,6 +246,23 @@ pub(crate) fn resolve_code_class_name(
     find_source_class_name(name, namespace, local_classes, class_loader)
         .or_else(|| qualify_unknown_code_name(name, namespace, imports))
         .unwrap_or_else(|| name.to_string())
+}
+
+/// `ty` with every class name qualified the way PHP reads a name written
+/// where `namespace` and `imports` are in force, without asking whether
+/// the class exists.
+///
+/// For a type written in another file than the one being read, whose
+/// imports the reader's loaders do not know.
+pub(crate) fn qualify_written_type_names(
+    ty: &crate::php_type::PhpType,
+    namespace: Option<&str>,
+    imports: &HashMap<String, String>,
+) -> crate::php_type::PhpType {
+    ty.resolve_names(&|name| {
+        qualify_unknown_code_name(name, namespace, Some(imports))
+            .unwrap_or_else(|| name.trim_start_matches('\\').to_string())
+    })
 }
 
 /// The name PHP reads a class name no class answers to as: expanded
@@ -484,6 +514,21 @@ mod tests {
         );
         assert_eq!(resolve_to_fqn("Baz", &imports, &namespace), r"App\Baz");
         assert_eq!(resolve_to_fqn(r"\bar", &imports, &namespace), "bar");
+    }
+
+    #[test]
+    fn namespace_relative_names_ignore_imports() {
+        let imports = HashMap::from([("Bar".to_string(), r"Lib\Bar".to_string())]);
+        let namespace = Some("App".to_string());
+        assert_eq!(
+            resolve_to_fqn(r"namespace\Bar", &imports, &namespace),
+            r"App\Bar"
+        );
+        assert_eq!(
+            resolve_to_fqn(r"NameSpace\Bar\Baz", &imports, &namespace),
+            r"App\Bar\Baz"
+        );
+        assert_eq!(resolve_to_fqn(r"namespace\Bar", &imports, &None), "Bar");
     }
 
     /// `ty` written inside `namespace App` of `content`, with `imports` and

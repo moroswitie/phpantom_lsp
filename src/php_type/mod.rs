@@ -494,12 +494,26 @@ pub struct GenericType {
 /// Payload of [`TypeKind::Callable`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CallableType {
-    /// One of `callable`, `Closure`, `pure-callable`, `pure-Closure`.
+    /// `callable` or `Closure`, as written (so possibly `\Closure`).
     pub kind: Atom,
     /// Parameter types.
     pub params: Vec<CallableParam>,
     /// Optional return type.
     pub return_type: Option<PhpType>,
+}
+
+impl CallableType {
+    /// Whether this signature describes a `Closure` (`Closure(int): string`,
+    /// `\Closure(): void`, `pure-closure(): void`) rather than a plain
+    /// `callable`.
+    ///
+    /// A closure signature is still an instance of the `Closure` class, so
+    /// it has that class's members; a `callable` may be a string or an
+    /// array and has none.
+    pub fn is_closure(&self) -> bool {
+        let kind = self.kind.strip_prefix('\\').unwrap_or(&self.kind);
+        kind.eq_ignore_ascii_case("Closure")
+    }
 }
 
 /// Payload of [`TypeKind::Conditional`].
@@ -515,23 +529,34 @@ pub struct ConditionalType {
     pub then_type: PhpType,
     /// The type when the condition is false.
     pub else_type: PhpType,
-    /// Whether an undecidable condition answers with `else_type` rather
-    /// than the union of both branches.
-    ///
-    /// A conditional someone wrote in a docblock describes two outcomes
-    /// the call really can have, so an argument that settles neither
-    /// leaves both on the table. A conditional we synthesised to patch a
-    /// stub can be modelling something narrower: `pow()`'s `object`
-    /// branch exists only for the operator-overloading extensions (GMP,
-    /// BCMath), and an argument nobody gave a type is no reason to
-    /// believe one of those is in play. Setting this on such a
-    /// conditional keeps the ordinary answer instead of widening to a
-    /// union with a branch the call almost certainly does not take.
-    ///
-    /// Never set from parsed PHPDoc — [`PhpType::conditional`] leaves it
-    /// off, and only [`PhpType::conditional_defaulting_to_else`] turns
-    /// it on.
-    pub else_when_undecided: bool,
+    /// How the conditional answers when its condition cannot be decided.
+    pub undecided: UndecidedReading,
+}
+
+/// What a [`ConditionalType`] answers when the argument it keys on settles
+/// neither branch.
+///
+/// A conditional someone wrote in a docblock describes two outcomes the call
+/// really can have, so an argument that settles neither leaves both on the
+/// table: [`UndecidedReading::BothBranches`], the only reading parsed PHPDoc
+/// produces. The other readings are for conditionals synthesised to patch a
+/// stub, which can be modelling something narrower.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum UndecidedReading {
+    /// The union of both branches.
+    BothBranches,
+    /// The else branch alone. `pow()`'s `object` branch exists only for the
+    /// operator-overloading extensions (GMP, BCMath), and an argument nobody
+    /// gave a type is no reason to believe one of those is in play, so the
+    /// ordinary answer stands instead of widening to a union with a branch
+    /// the call almost certainly does not take.
+    ElseBranch,
+    /// The union of both branches, marked benevolent. `preg_replace()`
+    /// handed a subject of unknown type may return either shape, but the
+    /// caller gets back the shape it passed in, which the engine could not
+    /// see either, so the union is not worth enforcing against the next
+    /// call the result is handed to. PHPStan answers the same way.
+    BenevolentBothBranches,
 }
 
 /// A single field in an array or object shape.

@@ -379,9 +379,9 @@ pub(in crate::type_engine) fn spread_entries(
         .iter()
         .zip(keys)
         .map(|(entry, key)| {
-            // A class-constant key is stored as its spelling, which says
-            // nothing about the key it evaluates to.
-            if entry.optional || key.contains("::") {
+            // A class-constant key other than `Foo::class` is stored as its
+            // spelling, which says nothing about the key it evaluates to.
+            if entry.optional || crate::php_type::is_opaque_shape_key(&key) {
                 return None;
             }
             let key = crate::php_type::canonical_int_key(&key)
@@ -811,6 +811,12 @@ pub(in crate::type_engine) fn extract_arg_texts_from_ast(
                 mago_syntax::cst::argument::Argument::Named(named) => {
                     let name = crate::atom::bytes_to_str(named.name.value);
                     format!("{name}: {value}")
+                }
+                // A spread keeps its `...`, as it is written in the source the
+                // text-driven caller splits, so a variadic parameter takes the
+                // array's elements rather than the array.
+                mago_syntax::cst::argument::Argument::Positional(pos) if pos.ellipsis.is_some() => {
+                    format!("...{value}")
                 }
                 mago_syntax::cst::argument::Argument::Positional(_) => value.to_string(),
             }

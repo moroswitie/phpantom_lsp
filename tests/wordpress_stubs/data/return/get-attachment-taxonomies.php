@@ -21,6 +21,6 @@ assertType('array<string, WP_Taxonomy>', get_attachment_taxonomies(Faker::int(),
 assertType('array<int, string>|array<string, WP_Taxonomy>', get_attachment_taxonomies(Faker::int(), Faker::string())); // PHPantom keeps the array types apart where PHPStan merges them
 
 // Unions
-assertType('array<int|string, string|WP_Taxonomy>', get_attachment_taxonomies(Faker::int(), Faker::union('names', 'objects'))); // SKIP: a variadic template parameter binds only the first argument
+assertType('array<int, string>|array<string, WP_Taxonomy>', get_attachment_taxonomies(Faker::int(), Faker::union('names', 'objects'))); // PHPantom keeps the array types apart where PHPStan merges them
 assertType('array<int, string>|array<string, WP_Taxonomy>', get_attachment_taxonomies(Faker::int(), Faker::union(Faker::string(), 'names'))); // PHPantom keeps the array types apart where PHPStan merges them
 assertType('array<int, string>|array<string, WP_Taxonomy>', get_attachment_taxonomies(Faker::int(), Faker::union(Faker::string(), 'objects'))); // PHPantom keeps the array types apart where PHPStan merges them

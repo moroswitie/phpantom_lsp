@@ -223,3 +223,161 @@ fn unresolvable_config_falls_back_to_implementors() {
         ]))
     );
 }
+
+/// A backend whose `config/auth.php` names `App\Models\User`, kept alive by the
+/// returned directory, and a loader that knows that one class.
+fn backend_configuring_user_model() -> (
+    Backend,
+    tempfile::TempDir,
+    impl Fn(Fqn<'_>) -> Option<Arc<ClassInfo>> + Sync,
+) {
+    backend_with_auth_model(r"'App\Models\User'")
+}
+
+/// A backend whose `config/auth.php` gives `model_expr` as the model, kept
+/// alive by the returned directory, and a loader that knows `App\Models\User`.
+fn backend_with_auth_model(
+    model_expr: &str,
+) -> (
+    Backend,
+    tempfile::TempDir,
+    impl Fn(Fqn<'_>) -> Option<Arc<ClassInfo>> + Sync,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("config")).unwrap();
+    std::fs::write(
+        dir.path().join("config/auth.php"),
+        format!(
+            "<?php return [
+                'defaults' => ['guard' => 'web'],
+                'guards' => ['web' => ['provider' => 'users']],
+                'providers' => ['users' => ['model' => {model_expr}]],
+            ];"
+        ),
+    )
+    .unwrap();
+    let backend = crate::test_fixtures::make_backend();
+    *backend.workspace.workspace_root.write() = Some(dir.path().to_path_buf());
+
+    let mut user = crate::test_fixtures::make_class("User");
+    user.file_namespace = Some(atom("App\\Models"));
+    user.interfaces.push(atom(AUTHENTICATABLE_FQN));
+    let user = Arc::new(user);
+    let load_user =
+        move |name: Fqn<'_>| (name.as_str() == "App\\Models\\User").then(|| user.clone());
+    (backend, dir, load_user)
+}
+
+/// A thread that asks for the auth model while another is computing it gets
+/// the model.  Seeing "no model" here would leave `user()` unrefined in
+/// whatever class that thread caches, depending only on thread timing.
+#[test]
+fn a_thread_asking_during_the_computation_gets_the_model() {
+    use std::sync::Barrier;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let (backend, _dir, load_user) = backend_configuring_user_model();
+
+    let computing = Barrier::new(2);
+    let paused = AtomicBool::new(false);
+    let pausing_loader = |name: Fqn<'_>| {
+        if !paused.swap(true, Ordering::Relaxed) {
+            computing.wait();
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        load_user(name)
+    };
+
+    let during = std::thread::scope(|scope| {
+        scope.spawn(|| resolve_auth_user_type(&backend, None, &pausing_loader));
+        computing.wait();
+        resolve_auth_user_type(&backend, None, &load_user)
+    });
+
+    assert_eq!(during, Some(named("App\\Models\\User")));
+}
+
+/// A thread that asks while another is computing the model does not wait for
+/// that computation.  The computing thread's loads can wait on whatever the
+/// asking thread holds (the workspace index pass, a class resolution claim),
+/// so waiting here could deadlock both.
+#[test]
+fn a_thread_asking_during_the_computation_does_not_wait_for_it() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Barrier, Mutex, mpsc};
+
+    let (backend, _dir, load_user) = backend_configuring_user_model();
+
+    let computing = Barrier::new(2);
+    let paused = AtomicBool::new(false);
+    let (answered_tx, answered_rx) = mpsc::channel::<()>();
+    let answered_rx = Mutex::new(answered_rx);
+    let waiting_loader = |name: Fqn<'_>| {
+        if !paused.swap(true, Ordering::Relaxed) {
+            computing.wait();
+            // Stands in for a load that waits on something the other thread
+            // holds until that thread has its answer.
+            let _ = answered_rx
+                .lock()
+                .unwrap()
+                .recv_timeout(std::time::Duration::from_secs(10));
+        }
+        load_user(name)
+    };
+
+    let (during, computed, answered_in_time) = std::thread::scope(|scope| {
+        let computing_thread =
+            scope.spawn(|| resolve_auth_user_type(&backend, None, &waiting_loader));
+        computing.wait();
+        let started = std::time::Instant::now();
+        let during = resolve_auth_user_type(&backend, None, &load_user);
+        let answered_in_time = started.elapsed() < std::time::Duration::from_secs(5);
+        answered_tx.send(()).unwrap();
+        (during, computing_thread.join().unwrap(), answered_in_time)
+    });
+
+    assert!(answered_in_time, "waited for the other computation");
+    assert_eq!(during, Some(named("App\\Models\\User")));
+    assert_eq!(computed, during);
+}
+
+/// The loads a computation triggers ask for the model too, and must get the
+/// raw class rather than recurse.
+#[test]
+fn the_computing_thread_asking_again_gets_no_model() {
+    let (backend, _dir, load_user) = backend_configuring_user_model();
+
+    let during = std::cell::OnceCell::new();
+    let reentrant_loader = |name: Fqn<'_>| {
+        during.get_or_init(|| resolve_auth_user_type(&backend, None, &load_user));
+        load_user(name)
+    };
+
+    let computed = resolve_auth_user_type(&backend, None, &reentrant_loader);
+
+    assert_eq!(during.get(), Some(&None));
+    assert_eq!(computed, Some(named("App\\Models\\User")));
+}
+
+/// A model the config does not pin down widens to the project's implementors
+/// without waiting for the workspace index.  The index pass loads the auth
+/// entry points itself, so a computation waiting on it never finished.
+#[test]
+fn the_implementor_floor_does_not_wait_for_the_workspace_index() {
+    let (backend, _dir, load_user) = backend_with_auth_model("runtime_model()");
+    let indexing = backend.workspace_index.lock.lock();
+
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let finished = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let _ = done_tx.send(resolve_auth_user_type(&backend, None, &load_user));
+        });
+        let finished = done_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .is_ok();
+        drop(indexing);
+        finished
+    });
+
+    assert!(finished, "waited for the workspace index");
+}

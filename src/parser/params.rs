@@ -75,6 +75,15 @@ fn collect_intersection_members(hint: &Hint, members: &mut Vec<PhpType>) {
     }
 }
 
+/// Whether `parameter_list` declares a parameter named `name` (with its
+/// `$`), whatever PHP versions it is available for.
+pub(crate) fn declares_parameter(parameter_list: &FunctionLikeParameterList, name: &str) -> bool {
+    parameter_list
+        .parameters
+        .iter()
+        .any(|param| param.variable.name == name.as_bytes())
+}
+
 /// Extract parameter information from a method's parameter list.
 ///
 /// When `content` is provided, default value expressions are extracted
@@ -199,9 +208,9 @@ pub(crate) fn param_default_is_null(
 /// The default is read back as source text at the call site, so the result
 /// keeps a leading `\`: an unprefixed `Vendor\Foo` would be qualified with
 /// the caller's namespace.  Without imports or a namespace to read it
-/// against (the class parse of `update_ast` passes neither) the default is
-/// left as written, for the qualification that follows the parse
-/// ([`qualify_param_default`]) to settle.
+/// against (a file in the global namespace with no `use` before the class)
+/// the default is left as written, for the qualification that follows the
+/// parse ([`qualify_param_default`]) to settle.
 fn resolve_default_class_name(name: &str, doc_ctx: Option<&DocblockCtx<'_>>) -> String {
     match doc_ctx {
         Some(ctx) if !ctx.use_map.is_empty() || ctx.namespace.is_some() => {
