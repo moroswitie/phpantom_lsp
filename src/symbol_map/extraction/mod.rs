@@ -102,6 +102,8 @@ struct ExtractionCtx<'a> {
     /// What the file's PHP configurator calls declare a service or a
     /// parameter as.
     container_values: Vec<crate::symbol_map::ContainerValueSite>,
+    /// The entity types the file's entity classes declare.
+    entity_types: Vec<crate::symbol_map::EntityTypeSite>,
     /// Current conditional nesting depth (if/else, switch, while, for, etc.).
     /// Incremented when entering a conditional block, decremented when leaving.
     cond_nesting_depth: u16,
@@ -141,6 +143,14 @@ struct ExtractionCtx<'a> {
     /// `get()` and `set()` would otherwise record all over any other
     /// project.
     symfony: bool,
+    /// Whether the project builds a Symfony service container, as Symfony
+    /// and Drupal both do.  Gates the container lookups recorded for the
+    /// type engine to confirm as naming a service or a parameter.
+    service_container: bool,
+    /// Whether the project is a Drupal site.  Gates the lookups only
+    /// Drupal makes, such as `\Drupal::service()`, the entity types an
+    /// entity class declares, and the entity type IDs its manager reads.
+    drupal: bool,
     /// Whether the project uses Twig, outside Symfony too.  Gates the
     /// `render()` calls recorded for the type engine to confirm as naming
     /// a template.
@@ -305,6 +315,7 @@ impl<'a> ExtractionCtx<'a> {
 }
 
 mod class_like;
+mod drupal;
 mod expressions;
 mod keywords;
 pub(crate) mod laravel;
@@ -320,6 +331,7 @@ mod yii;
 mod yii_routes;
 
 use class_like::*;
+use drupal::*;
 use expressions::*;
 use keywords::*;
 use laravel::*;
@@ -360,13 +372,39 @@ fn descend_unhandled<'a>(node: Node<'a, 'a>, ctx: &mut ExtractionCtx<'a>, scope_
 
 // ─── AST extraction ─────────────────────────────────────────────────────────
 
+/// The frameworks whose names a symbol map records, by what the project
+/// uses.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Frameworks {
+    /// The project is a Symfony application.
+    pub symfony: bool,
+    /// The project builds a Symfony service container: a Symfony or a
+    /// Drupal project.
+    pub service_container: bool,
+    /// The project is a Drupal project.
+    pub drupal: bool,
+    /// The project uses Twig.
+    pub twig: bool,
+}
+
+#[cfg(test)]
+impl Frameworks {
+    /// Every framework, for tests that do not care which project they are in.
+    pub(crate) const ALL: Self = Self {
+        symfony: true,
+        service_container: true,
+        drupal: true,
+        twig: true,
+    };
+}
+
 /// Build a [`SymbolMap`] from a parsed PHP program.
 ///
 /// Walks every statement recursively and emits [`SymbolSpan`] entries for
 /// every navigable symbol occurrence.
 #[cfg(test)]
 pub(crate) fn extract_symbol_map(program: &Program<'_>, content: &str) -> SymbolMap {
-    extract_symbol_map_inner(program, content, None, true, true, None)
+    extract_symbol_map_inner(program, content, None, Frameworks::ALL, None)
 }
 
 /// Build a [`SymbolMap`] using the semantic names produced by `mago-names`.
@@ -376,8 +414,13 @@ pub(crate) fn extract_symbol_map_with_resolved_names(
     content: &str,
     resolved_names: &OwnedResolvedNames,
 ) -> SymbolMap {
-    let mut map =
-        extract_symbol_map_inner(program, content, Some(resolved_names), true, true, None);
+    let mut map = extract_symbol_map_inner(
+        program,
+        content,
+        Some(resolved_names),
+        Frameworks::ALL,
+        None,
+    );
     map.refresh_conditional_string_key_spans(None, |_| false);
     map
 }
@@ -385,35 +428,31 @@ pub(crate) fn extract_symbol_map_with_resolved_names(
 /// Build a semantic map while retaining workspace-dependent Laravel spans as
 /// dormant candidates for the publication lifecycle to settle.
 ///
-/// `symfony` says whether the project builds a Symfony service container,
-/// `twig` whether it uses Twig, and `yii_dir` is the file's directory when
-/// the project is a Yii application.
+/// `frameworks` says which frameworks' names to record, and `yii_dir` is the
+/// file's directory when the project is a Yii application.
 pub(crate) fn extract_symbol_map_for_index(
     program: &Program<'_>,
     content: &str,
     resolved_names: &OwnedResolvedNames,
-    symfony: bool,
-    twig: bool,
+    frameworks: Frameworks,
     yii_dir: Option<&std::path::Path>,
 ) -> SymbolMap {
-    extract_symbol_map_inner(
-        program,
-        content,
-        Some(resolved_names),
-        symfony,
-        twig,
-        yii_dir,
-    )
+    extract_symbol_map_inner(program, content, Some(resolved_names), frameworks, yii_dir)
 }
 
 fn extract_symbol_map_inner(
     program: &Program<'_>,
     content: &str,
     resolved_names: Option<&OwnedResolvedNames>,
-    symfony: bool,
-    twig: bool,
+    frameworks: Frameworks,
     yii_dir: Option<&std::path::Path>,
 ) -> SymbolMap {
+    let Frameworks {
+        symfony,
+        service_container,
+        drupal,
+        twig,
+    } = frameworks;
     let mut ctx = ExtractionCtx {
         spans: Vec::new(),
         var_defs: Vec::new(),
@@ -442,6 +481,7 @@ fn extract_symbol_map_inner(
         twig_callables: Vec::new(),
         twig_contexts: Vec::new(),
         container_values: Vec::new(),
+        entity_types: Vec::new(),
         cond_nesting_depth: 0,
         cond_block_end_stack: Vec::new(),
         has_laravel_container_attrs: None,
@@ -452,6 +492,8 @@ fn extract_symbol_map_inner(
         in_controller: false,
         covers_default_class: None,
         symfony,
+        service_container,
+        drupal,
         twig,
         uses_symfony_configurators: None,
         uses_symfony_routing_configurators: None,
@@ -591,6 +633,7 @@ fn extract_symbol_map_inner(
     ctx.typed_receiver_sites.sort_by_key(|s| s.start);
     ctx.morph_column_sites.sort_by_key(|s| s.start);
     ctx.container_values.sort_by_key(|s| s.start);
+    ctx.entity_types.sort_by_key(|s| s.start);
     ctx.routes.shrink_to_fit();
 
     let mut member_access_indices: crate::atom::AtomMap<Vec<usize>> =
@@ -631,6 +674,7 @@ fn extract_symbol_map_inner(
         twig_callables: ctx.twig_callables,
         twig_contexts: ctx.twig_contexts,
         container_values: ctx.container_values,
+        entity_types: ctx.entity_types,
         routes: ctx.routes,
         declares_twig_loader: ctx.declares_twig_loader,
         route_imports: ctx

@@ -460,7 +460,7 @@ fn stale_scope_batch_does_not_clobber_a_fresher_reinference() {
 #[test]
 fn reinference_of_a_replaced_buffer_leaves_the_scope_alone() {
     let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().canonicalize().unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     let views = root.join("resources/views");
     std::fs::create_dir_all(views.join("layouts")).unwrap();
     std::fs::write(

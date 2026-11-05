@@ -235,7 +235,17 @@ impl Backend {
             };
         };
         if call.is_static {
-            return None;
+            // `\Drupal::service('|')`, `\Drupal::hasService('|')`, and
+            // `\Drupal::entityQuery('|')`.
+            if call.arg_index != 0 || !self.is_drupal_project() {
+                return None;
+            }
+            let class = ctx.resolve_name_at(subject, cursor as u32);
+            if crate::drupal::is_service_lookup(&class, &call.method_name) {
+                return Some(StringKeyKind::ServiceId);
+            }
+            return crate::drupal::is_entity_query(&class, &call.method_name)
+                .then_some(StringKeyKind::DrupalEntityType);
         }
         self.receiver_call_key(
             subject,
@@ -407,6 +417,8 @@ impl Backend {
                 return (!items.is_empty())
                     .then_some(CompletionResponse::CompletionItemList(items));
             }
+        } else if self.is_drupal_services_uri(uri) {
+            resource_key_at(content, cursor)?
         } else if !is_symfony {
             return None;
         } else if crate::symfony::resources::is_container_config_uri(uri) {

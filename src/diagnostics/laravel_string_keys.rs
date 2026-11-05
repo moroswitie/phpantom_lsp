@@ -91,8 +91,10 @@ impl CheckedStringKind {
             // since another plugin or a later core may fire it.  A block
             // name that nothing above defines starts a new block.  A
             // template variable no render was found to pass may be passed
-            // by one that builds its context at runtime.
+            // by one that builds its context at runtime.  A module can add
+            // an entity type in PHP, through `hook_entity_type_build()`.
             StringKeyKind::WordPressHook
+            | StringKeyKind::DrupalEntityType
             | StringKeyKind::TranslationDomain
             | StringKeyKind::Section
             | StringKeyKind::Stack
@@ -826,6 +828,15 @@ impl Backend {
                 if *is_write || *is_optional || !self.string_key_kind_enabled(*kind) {
                     return None;
                 }
+                // Only Symfony's naming tells an application's own service
+                // IDs and parameters from the ones its bundles register;
+                // Drupal reads the same names with no such rule to judge
+                // them by.
+                if kind.framework() == crate::symbol_map::KeyFramework::ServiceContainer
+                    && !self.is_symfony_project()
+                {
+                    return None;
+                }
                 Some((
                     CheckedStringKind::of(kind)?,
                     key.as_str(),
@@ -1113,7 +1124,7 @@ mod tests {
 
         // Register the unindexed file in fqn_uri_index so
         // ensure_workspace_indexed Phase 1 will try to parse it.
-        let unindexed_uri = format!("file://{}", unindexed_file.to_str().unwrap());
+        let unindexed_uri = crate::util::path_to_uri(&unindexed_file);
         backend
             .symbols
             .fqn_uri_index

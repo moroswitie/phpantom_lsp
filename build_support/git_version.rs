@@ -44,7 +44,7 @@ pub fn describe(root: &Path) -> Option<String> {
     // Source packages may be built inside another checkout's target directory.
     // That enclosing repository does not describe the package being built.
     let top = git(root, &["rev-parse", "--show-toplevel"])?;
-    if fs::canonicalize(top).ok()? != fs::canonicalize(root).ok()? {
+    if dunce::canonicalize(top).ok()? != dunce::canonicalize(root).ok()? {
         return None;
     }
 

@@ -83,7 +83,7 @@ async fn lazy_load_of_an_open_file_keeps_the_buffers_classes() {
 async fn autoload_files_workspace() -> (Backend, tempfile::TempDir, PathBuf) {
     let disk = "<?php\n\n// saved version\nfunction old_helper(): int { return 1; }\nconst OLD_LIMIT = 1;\n";
     let dir = tempfile::tempdir().expect("failed to create temp dir");
-    let root = dir.path().canonicalize().unwrap();
+    let root = dunce::canonicalize(dir.path()).unwrap();
     fs::write(root.join("composer.json"), "{}\n").unwrap();
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(root.join("src/helpers.php"), disk).unwrap();

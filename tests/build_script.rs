@@ -98,6 +98,7 @@ default = ["offline-stubs"]
 offline-stubs = []
 
 [build-dependencies]
+dunce = "1"
 ureq = "3"
 tar = "0.4"
 flate2 = "1"

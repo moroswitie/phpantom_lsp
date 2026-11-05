@@ -922,10 +922,7 @@ fn test_path_repo_psr4_symlinked_package_inside_workspace() {
     assert_eq!(mappings.len(), 1, "expected one path-repo mapping");
     assert_eq!(mappings[0].prefix, "Demo\\Common\\");
     assert!(
-        mappings[0]
-            .base_path
-            .trim_end_matches('/')
-            .ends_with("app-modules/common/src"),
+        std::path::Path::new(&mappings[0].base_path).ends_with("app-modules/common/src"),
         "base_path should point at the module's src dir, got {}",
         mappings[0].base_path
     );
@@ -1065,7 +1062,7 @@ fn test_psr0_scan_does_not_follow_a_link_back_up_the_tree() {
     )
     .expect("failed to create symlink");
 
-    let classmap = parse_autoload_namespaces(ws.root(), "vendor");
+    let classmap = phpantom_lsp::composer::parse_autoload_namespaces(ws.root(), "vendor");
     assert_eq!(
         classmap.get("Legacy_Widget"),
         Some(&ws.root().join("vendor/legacy/lib/Legacy/Widget.php")),

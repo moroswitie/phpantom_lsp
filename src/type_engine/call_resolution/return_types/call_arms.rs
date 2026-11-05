@@ -74,6 +74,60 @@ impl Backend {
             return classes;
         }
 
+        // Drupal: a load or an entity query on an entity storage tagged with
+        // its entity class, the count and IDs of a tagged query, and
+        // `getStorage('node')` on an entity type manager (see
+        // `crate::drupal::types`).
+        let in_drupal = ctx
+            .file
+            .backend
+            .filter(|backend| backend.is_drupal_project());
+        if in_drupal.is_some()
+            && let Some(ty) =
+                crate::drupal::types::load_type(method_name, &lhs_resolved, ctx.file.class_loader)
+                    .or_else(|| {
+                        crate::drupal::types::query_call_type(
+                            method_name,
+                            &lhs_resolved,
+                            ctx.file.class_loader,
+                        )
+                    })
+        {
+            let classes = crate::type_engine::type_resolution::type_hint_to_classes_typed_returned(
+                &ty,
+                "",
+                ctx.file.all_classes,
+                ctx.file.class_loader,
+            );
+            if let Some(ref mut hint_out) = return_type_hint_out {
+                **hint_out = Some(ty);
+            }
+            return classes;
+        }
+        if method_name.eq_ignore_ascii_case("getStorage")
+            && let Some(backend) = in_drupal
+            && let Some(id) = first_literal_text_arg(text_args, "entity_type_id")
+        {
+            for owner in lhs_resolved.iter().filter_map(|r| r.class_info.as_deref()) {
+                if let Some(storages) = crate::drupal::types::storage_type(
+                    backend,
+                    owner,
+                    method_name,
+                    id,
+                    ctx.file.class_loader,
+                ) {
+                    // A chain carries one hint: with two declarations of the
+                    // ID it is their union, which a following load cannot
+                    // read a single entity from.
+                    let (classes, types): (Vec<_>, Vec<_>) = storages.into_iter().unzip();
+                    if let Some(ref mut hint_out) = return_type_hint_out {
+                        **hint_out = Some(crate::php_type::PhpType::union(types));
+                    }
+                    return classes;
+                }
+            }
+        }
+
         // Guard-aware auth user model: a `user()` call on a
         // `Guard`/`Request` subtype resolves to the model
         // configured for the guard named at the call site
@@ -316,6 +370,45 @@ impl Backend {
         }
         let owner_class = all_owners.into_iter().next();
 
+        // `\Drupal::service('id')` is typed by the class the ID is built
+        // from (see `crate::drupal::types`).
+        if method_name.eq_ignore_ascii_case("service")
+            && let Some(ref owner) = owner_class
+            && let Some(backend) = ctx.file.backend
+            && backend.is_drupal_project()
+            && let Some(id) = first_literal_text_arg(text_args, "id")
+            && let Some(classes) = crate::drupal::types::service_classes(
+                backend,
+                &owner.fqn(),
+                method_name,
+                id,
+                ctx.file.class_loader,
+            )
+        {
+            return classes;
+        }
+        // `\Drupal::entityQuery('node')` is a query tagged with the entity
+        // type's classes (see `crate::drupal::types`).
+        if method_name.eq_ignore_ascii_case("entityQuery")
+            && let Some(ref owner) = owner_class
+            && let Some(backend) = ctx.file.backend
+            && backend.is_drupal_project()
+            && let Some(id) = first_literal_text_arg(text_args, "entity_type")
+            && let Some(ty) =
+                crate::drupal::types::entity_query_type(backend, &owner.fqn(), method_name, id)
+        {
+            let classes = crate::type_engine::type_resolution::type_hint_to_classes_typed_returned(
+                &ty,
+                "",
+                ctx.file.all_classes,
+                ctx.file.class_loader,
+            );
+            if let Some(ref mut hint_out) = return_type_hint_out {
+                **hint_out = Some(ty);
+            }
+            return classes;
+        }
+
         if let Some(ref owner) = owner_class {
             // A static call through a Laravel facade is typed by the
             // container class the facade forwards to, so that
@@ -347,6 +440,42 @@ impl Backend {
             let arg_refs = split_args.to_vec();
             let template_subs =
                 Self::build_method_template_subs(&merged, method_name, &arg_refs, ctx);
+
+            // `parent::` forwards late static binding, so a `static`
+            // return names the calling class rather than the parent that
+            // declares it.  (`self::`/`static::` already name the caller.)
+            let target = merged.get_method_ci(method_name);
+            let lsb_caller = ctx
+                .current_class
+                .filter(|caller| !caller.name.is_empty() && class.eq_ignore_ascii_case("parent"));
+            if let Some(caller) = lsb_caller
+                && target
+                    .and_then(|m| m.return_type.as_ref())
+                    .is_some_and(PhpType::is_late_static_bound)
+            {
+                if let Some(ref mut hint_out) = return_type_hint_out
+                    && let Some(m) = target
+                    && let Some(substituted) = method_call_return_hint(
+                        m,
+                        &merged,
+                        text_args,
+                        &template_subs,
+                        &build_var_resolver(ctx),
+                        &written,
+                        ctx,
+                    )
+                {
+                    **hint_out = Some(resolve_hint_keywords(
+                        substituted,
+                        &merged,
+                        ctx.file.class_loader,
+                        |s| s.replace_self_bound(&merged.fqn(), Some(&caller.fqn())),
+                    ));
+                }
+                let caller = (ctx.file.class_loader)(Fqn::new(&caller.fqn()))
+                    .unwrap_or_else(|| Arc::new(caller.clone()));
+                return vec![caller];
+            }
 
             if let Some(ref mut hint_out) = return_type_hint_out
                 && let Some(m) = merged.get_method_ci(method_name)
@@ -1089,4 +1218,12 @@ fn method_call_return_hint(
             &tpl,
         ),
     )
+}
+
+/// The value of the argument that binds a call's first parameter, named
+/// `name`, when it is a plain string literal.
+fn first_literal_text_arg<'t>(text_args: &'t str, name: &str) -> Option<&'t str> {
+    let args = split_top_level_commas(text_args);
+    let first = crate::call_args::first_param_text_arg(&args, name)?;
+    crate::text_scan::unquote_php_string(first.trim())
 }
