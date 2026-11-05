@@ -40,7 +40,7 @@ pub(super) fn extract_method<'a>(
         },
         class_template_param_bounds,
     )?;
-    if is_constructor {
+    let promoted_descriptions = if is_constructor {
         push_promoted_properties(
             method,
             doc_ctx,
@@ -48,8 +48,10 @@ pub(super) fn extract_method<'a>(
             class_template_param_bounds,
             &mut signature,
             properties,
-        );
-    }
+        )
+    } else {
+        Vec::new()
+    };
     let Signature {
         mut parameters,
         native_return_type,
@@ -121,6 +123,11 @@ pub(super) fn extract_method<'a>(
     if let Some(ref info) = method_docblock_info {
         for param in &mut parameters {
             param.description = docblock::extract_param_description_from_info(info, &param.name);
+        }
+    }
+    for (name, text) in promoted_descriptions {
+        if let Some(param) = parameters.iter_mut().find(|p| p.name == name) {
+            param.description = Some(text);
         }
     }
 
@@ -207,8 +214,12 @@ pub(super) fn extract_method<'a>(
 /// types the parameter in `signature`, and binds the class templates it
 /// names.
 ///
-/// The description comes from the parameter's own docblock first, then the
-/// constructor's `@param` text; the two are never merged.
+/// The property's description comes from the parameter's own docblock
+/// first, then the constructor's `@param` text; the two are never merged.
+/// The argument's description is the other way round: the `@param` text
+/// first, then the parameter's own. Returns the own texts the arguments
+/// need, by parameter name, for the caller to apply once the `@param`
+/// texts are in.
 fn push_promoted_properties<'a>(
     method: &'a Method<'a>,
     doc_ctx: Option<&DocblockCtx<'a>>,
@@ -216,7 +227,8 @@ fn push_promoted_properties<'a>(
     class_template_param_bounds: &AtomMap<PhpType>,
     signature: &mut Signature,
     properties: &mut Vec<PropertyInfo>,
-) {
+) -> Vec<(Atom, String)> {
+    let mut argument_descriptions = Vec::new();
     for param in method.parameter_list.parameters.iter() {
         if !param.is_promoted_property() {
             continue;
@@ -238,15 +250,19 @@ fn push_promoted_properties<'a>(
         let inline_var_type = inline_docblock_info
             .as_ref()
             .and_then(docblock::extract_var_type_from_info);
-        let description = inline_docblock_info
+        let own_description = inline_docblock_info
             .as_ref()
-            .and_then(crate::hover::extract_property_description_from_info)
-            .or_else(|| {
-                signature
-                    .docblock
-                    .as_ref()
-                    .and_then(|info| docblock::extract_param_description_from_info(info, &raw_name))
-            });
+            .and_then(crate::hover::extract_property_description_from_info);
+        let param_description = signature
+            .docblock
+            .as_ref()
+            .and_then(|info| docblock::extract_param_description_from_info(info, &raw_name));
+        if param_description.is_none()
+            && let Some(text) = &own_description
+        {
+            argument_descriptions.push((atom(&raw_name), text.clone()));
+        }
+        let description = own_description.or(param_description);
 
         let facts = if let Some(ref var_type) = inline_var_type {
             let facts =
@@ -317,6 +333,7 @@ fn push_promoted_properties<'a>(
             source: None,
         });
     }
+    argument_descriptions
 }
 
 /// Carry a promoted constructor parameter's inline `@var` over to the

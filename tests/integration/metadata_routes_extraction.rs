@@ -226,30 +226,52 @@ class Keeper {
 $__a2 = (new Keeper('x'))->keep(new Vault());
 "#;
 
+/// B1 with a constructor `@param` text for `$secret`, which explains the
+/// argument in place of the parameter's own text.
+fn b1_with_param_text() -> String {
+    B1.replacen(
+        "    public function __construct(",
+        "    /** @param non-empty-string $secret Constructor text. */\n    public function __construct(",
+        1,
+    )
+}
+
 /// The records hold the docblock written after the attribute as well as
-/// the one written before it.
+/// the one written before it. A promoted parameter's own text explains
+/// the property, and the argument too unless the constructor's `@param`
+/// gives the argument a text of its own.
 ///
 /// Spec: ATTR-001, ATTR-002.
 #[test]
 fn issue_17_docblock_after_attribute_record() {
     let backend = create_test_backend();
 
-    let classes = backend.parse_php(B1);
-    let vault = class(&classes, "Vault");
-    let constructor = method(vault, "__construct");
-    for (name, doc, description) in [
-        ("secret", "non-empty-string", "Own text."),
-        ("pin", "positive-int", "Before text."),
+    for (source, secret_argument) in [
+        (B1.to_string(), "Own text."),
+        (b1_with_param_text(), "Constructor text."),
     ] {
-        let prop = property(vault, name);
-        assert_eq!(text(&prop.doc_type).as_deref(), Some(doc), "${name}");
-        assert_eq!(prop.description.as_deref(), Some(description), "${name}");
-        let parameter = param(constructor, &format!("${name}"));
-        assert_eq!(
-            text(&parameter.doc_type).as_deref(),
-            Some(doc),
-            "parameter ${name}"
-        );
+        let classes = backend.parse_php(&source);
+        let vault = class(&classes, "Vault");
+        let constructor = method(vault, "__construct");
+        for (name, doc, description, argument) in [
+            ("secret", "non-empty-string", "Own text.", secret_argument),
+            ("pin", "positive-int", "Before text.", "Before text."),
+        ] {
+            let prop = property(vault, name);
+            assert_eq!(text(&prop.doc_type).as_deref(), Some(doc), "${name}");
+            assert_eq!(prop.description.as_deref(), Some(description), "${name}");
+            let parameter = param(constructor, &format!("${name}"));
+            assert_eq!(
+                text(&parameter.doc_type).as_deref(),
+                Some(doc),
+                "parameter ${name}"
+            );
+            assert_eq!(
+                parameter.description.as_deref(),
+                Some(argument),
+                "parameter ${name}"
+            );
+        }
     }
 
     let classes = backend.parse_php(B2);
@@ -341,21 +363,62 @@ async fn issue_17_docblock_after_attribute_completion() {
     }
 }
 
-/// Signature help of the constructor shows the types of the promoted
-/// parameters' docblocks, before and after the attribute alike. Types
-/// only: whether a promoted `@var` text is also a parameter text is not
-/// decided.
+/// Signature help of the constructor shows the types and texts of the
+/// promoted parameters' docblocks, before and after the attribute alike.
+/// The constructor's `@param` text, when there is one, comes first.
 ///
 /// Spec: ATTR-001, ATTR-002.
 #[tokio::test]
 async fn issue_17_docblock_after_attribute_signature_help() {
-    let backend = create_test_backend();
     let uri = Uri::parse("file:///test.php").unwrap();
-    let params = signature_params(&backend, &uri, B1, "new Vault(").await;
-    assert_eq!(
-        typed(&params),
-        ["non-empty-string $secret", "positive-int $pin"]
-    );
+    for (source, secret_argument) in [
+        (B1.to_string(), "Own text."),
+        (b1_with_param_text(), "Constructor text."),
+    ] {
+        let backend = create_test_backend();
+        let params = signature_params(&backend, &uri, &source, "new Vault(").await;
+        assert_eq!(
+            typed(&params),
+            ["non-empty-string $secret", "positive-int $pin"]
+        );
+        let texts: Vec<_> = params.iter().map(|p| p.text.as_deref()).collect();
+        assert_eq!(texts, [Some(secret_argument), Some("Before text.")]);
+    }
+}
+
+/// The text a call hover shows for the parameter `name` (with its `$`):
+/// after the name, or on the next line when a type follows the name.
+fn hover_param_text<'a>(markdown: &'a str, name: &str) -> Option<&'a str> {
+    let heading = format!("**{name}** ");
+    let mut lines = markdown.lines();
+    let rest = lines.find_map(|line| line.strip_prefix(heading.as_str()))?;
+    if rest.starts_with('`') {
+        lines.next().map(str::trim)
+    } else {
+        Some(rest)
+    }
+}
+
+/// The hover on the constructor call shows the same argument texts as
+/// signature help.
+///
+/// Spec: ATTR-001, ATTR-002.
+#[test]
+fn issue_17_docblock_after_attribute_call_hover() {
+    for (source, secret_argument) in [
+        (B1.to_string(), "Own text."),
+        (b1_with_param_text(), "Constructor text."),
+    ] {
+        let markdown = hover_markdown(&source, "new Vault(", 5, 0)
+            .unwrap_or_else(|| panic!("expected a hover on the constructor call"));
+        for (name, expected) in [("$secret", secret_argument), ("$pin", "Before text.")] {
+            assert_eq!(
+                hover_param_text(&markdown, name),
+                Some(expected),
+                "{name} in:\n{markdown}"
+            );
+        }
+    }
 }
 
 /// The docblock/native mismatch warning appears with the same message
