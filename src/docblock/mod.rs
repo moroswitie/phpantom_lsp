@@ -73,11 +73,11 @@ pub use tags::{
 };
 
 // Docblock vs. native type selection
-pub(crate) use type_override::is_compatible_refinement_typed;
 pub use type_override::{
     TypeFacts, resolve_effective_type_typed, resolve_effective_type_with_template_bounds,
     should_override_type_typed,
 };
+pub(crate) use type_override::{doc_type_widens_native, is_compatible_refinement_typed};
 
 // Docblock lines as source text
 pub(crate) use lines::{find_var_tag, strip_docblock_line_delimiters};

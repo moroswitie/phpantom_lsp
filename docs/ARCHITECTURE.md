@@ -879,6 +879,24 @@ to guess it.
   (`evict_batch_resolved_classes`, `src/parser/ast_publish.rs`). Guard:
   rule `no_doc_type_guessing` (the old `effective == native` helpers
   never return).
+- **Whether a PHPDoc type may stand in for a native type.** The owner is
+  `doc_type_widens_native` (`src/docblock/type_override.rs`): a PHPDoc
+  type provably wider than the native type gives way to it, since PHP
+  lets an override narrow its ancestor's type but never widen it, and the
+  native type is a promise the body keeps. Inheritance
+  (`src/inheritance/enrichment.rs`) asks it for every return, parameter
+  and property type it copies from an ancestor, so `Iterator::valid()`'s
+  `@return bool` leaves `EmptyIterator::valid(): false` alone and
+  `ArrayAccess::offsetGet()`'s `@return TValue` (unbound, so `mixed`)
+  leaves an implementation's `: int` alone. A declaration's own docblock
+  is judged by `should_override_type_typed` in the same file, which keeps
+  the native type over a wider docblock one too, and also handles the
+  refinements a structural subtype check cannot see (a `callable(): T` on
+  a native `callable`, a template bounded by a union of classes). Guard:
+  the unit tests beside
+  it and the PHPStan and Psalm assertion suites (`tests/phpstan_nsrt`,
+  `tests/psalm_assertions`); no string rule can tell such a comparison
+  apart.
 - **Whether a call is a `define()` declaration.** The owner is
   `src/parser/define_call.rs`: `define_call` recognises one call (callee
   `define` in any case, with or without one leading backslash, a non-empty

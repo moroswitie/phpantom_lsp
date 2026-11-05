@@ -16,6 +16,7 @@
 use std::sync::Arc;
 
 use super::ancestry::ClassLoader;
+use crate::docblock::doc_type_widens_native;
 use crate::php_type::{PhpType, TypeKind};
 use crate::types::{MethodInfo, ParameterInfo, PropertyInfo};
 
@@ -28,8 +29,10 @@ use crate::types::{MethodInfo, ParameterInfo, PropertyInfo};
 /// child's *native* hint still has the last word: an override
 /// declaring `: array` cannot return the `string` half of an interface's
 /// `@return array|string`, so the inherited union is restricted to what the
-/// override's own declaration allows. A native `never` allows nothing to be
-/// returned, so there is nothing an ancestor's docblock could refine.
+/// override's own declaration allows, and a type wider than that
+/// declaration gives way to it ([`doc_type_widens_native`]). A native `never`
+/// allows nothing to be returned, so there is nothing an ancestor's
+/// docblock could refine.
 fn inherited_return_type(
     existing: &MethodInfo,
     ancestor: &MethodInfo,
@@ -53,7 +56,8 @@ fn inherited_return_type(
         return Some(inherited);
     };
     let inherited = within_native_class(inherited, existing, ancestor, class_loader)?;
-    inherited.without_alternatives_the_native_type_forbids(native)
+    let inherited = inherited.without_alternatives_the_native_type_forbids(native)?;
+    (!doc_type_widens_native(&inherited, native)).then_some(inherited)
 }
 
 /// `inherited` without the classes the override's own native return hint
@@ -269,19 +273,39 @@ fn child_native_hint_overrides(
 
 /// Whether `existing_param` takes its type (and doc type) from
 /// `ancestor_param`: no PHPDoc type applies to the child, one applies to
-/// the ancestor, and the child declared no specific native hint of its own.
+/// the ancestor, the child declared no specific native hint of its own,
+/// and the ancestor's type is not wider than the child's native hint
+/// ([`doc_type_widens_native`]).
 fn inherits_parameter_type(existing_param: &ParameterInfo, ancestor_param: &ParameterInfo) -> bool {
     !child_native_hint_overrides(existing_param, ancestor_param)
         && existing_param.doc_type.is_none()
         && ancestor_param.doc_type.is_some()
+        && !widens_own_native(
+            ancestor_param.type_hint.as_ref(),
+            existing_param.native_type_hint.as_ref(),
+        )
+}
+
+/// [`doc_type_widens_native`] for a type and a native hint that may be
+/// absent: no native hint is nothing to widen.
+fn widens_own_native(inherited: Option<&PhpType>, native: Option<&PhpType>) -> bool {
+    inherited
+        .zip(native)
+        .is_some_and(|(inherited, native)| doc_type_widens_native(inherited, native))
 }
 
 /// Whether `existing` takes its type (and doc type) from `ancestor`: the
-/// child has no type at all, or no PHPDoc type applies to it and one
-/// applies to the ancestor.
+/// child has no type at all, or no PHPDoc type applies to it, one applies
+/// to the ancestor, and that type is not wider than the child's native
+/// hint ([`doc_type_widens_native`]).
 fn inherits_property_type(existing: &PropertyInfo, ancestor: &PropertyInfo) -> bool {
     existing.type_hint.is_none() && ancestor.type_hint.is_some()
-        || existing.doc_type.is_none() && ancestor.doc_type.is_some()
+        || existing.doc_type.is_none()
+            && ancestor.doc_type.is_some()
+            && !widens_own_native(
+                ancestor.type_hint.as_ref(),
+                existing.native_type_hint.as_ref(),
+            )
 }
 
 /// Whether `existing_param` takes `ancestor_param`'s description: it has
