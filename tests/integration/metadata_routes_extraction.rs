@@ -801,10 +801,16 @@ fn issue_23_written_doc_type_hover() {
         }
     }
 
+    // The override and the class that only inherits `current()` alike.
     let backend = create_test_backend_with_full_stubs();
-    let markdown = hover_markdown_on(&backend, "file:///test.php", Q1, "$it->current()", 6, 0)
-        .expect("expected a hover on ->current()");
-    assert!(markdown.contains("Foo"), "Q1 ->current(): {markdown}");
+    for (needle, delta) in [("$it->current()", 6), ("$p->current()", 5)] {
+        let markdown = hover_markdown_on(&backend, "file:///test.php", Q1, needle, delta, 0)
+            .unwrap_or_else(|| panic!("expected a hover on {needle}"));
+        assert!(
+            markdown.contains("**return** `Foo`"),
+            "Q1 {needle}: {markdown}"
+        );
+    }
 }
 
 /// The type engine reads the decided types in the bodies and at the
@@ -818,13 +824,10 @@ fn issue_23_written_doc_type_type_engine() {
     assert_var_type(Q4, "$__d1", "int");
     assert_var_type(Q4, "$__d2", "string");
     assert_var_type(Q3, "$__d1", "list<int>");
-    assert_var_type_on(
-        &create_test_backend_with_full_stubs(),
-        "file:///test.php",
-        Q1,
-        "$__d1",
-        "Foo",
-    );
+    let backend = create_test_backend_with_full_stubs();
+    for var in ["$__d1", "$__d2"] {
+        assert_var_type_on(&backend, "file:///test.php", Q1, var, "Foo");
+    }
 }
 
 /// Completion details carry the decided property types.
@@ -1073,7 +1076,8 @@ fn issue_27_relationship_override_record() {
 }
 
 /// The hover on the override's call shows the parent's relationship type,
-/// and the relationship property has the same type on both classes.
+/// and the relationship property is a collection of the related model on
+/// both classes.
 #[test]
 fn issue_27_relationship_override_hover() {
     let (backend, _dir, uri) = l1_workspace();
@@ -1097,9 +1101,13 @@ fn issue_27_relationship_override_hover() {
             .unwrap_or_else(|| panic!("expected a hover at {needle:?}"));
         property_hover_type(&markdown)
     };
-    let on_author = property_type("(new Author())->posts;");
-    assert!(on_author.is_some(), "no type on Author's posts property");
-    assert_eq!(property_type("(new GuestAuthor())->posts;"), on_author);
+    for needle in ["(new Author())->posts;", "(new GuestAuthor())->posts;"] {
+        assert_eq!(
+            property_type(needle).as_deref(),
+            Some("Collection<Post>"),
+            "{needle}"
+        );
+    }
 }
 
 /// The type engine gives the call through the override the parent's
@@ -1112,7 +1120,8 @@ fn issue_27_relationship_override_type_engine() {
     }
 }
 
-/// Completion offers `posts` with the same details on both classes.
+/// Completion offers the relationship property and method with their
+/// types on both classes, and the same `posts` entries on each.
 #[tokio::test]
 async fn issue_27_relationship_override_completion() {
     let content = l1_with_property_reads();
@@ -1128,7 +1137,13 @@ async fn issue_27_relationship_override_completion() {
                 .map(|item| (item.label, item.detail))
                 .collect();
         posts.sort();
-        assert!(!posts.is_empty(), "no posts completion after {after:?}");
+        for (label, detail) in [("posts", "Collection<Post>"), ("posts()", "HasMany<Post>")] {
+            let (_, shown) = posts
+                .iter()
+                .find(|(shown, _)| shown == label)
+                .unwrap_or_else(|| panic!("no `{label}` completion after {after:?}: {posts:?}"));
+            assert_eq!(shown.as_deref(), Some(detail), "`{label}` after {after:?}");
+        }
         details.push(posts);
     }
     assert_eq!(details[1], details[0]);
