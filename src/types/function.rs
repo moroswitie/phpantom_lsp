@@ -287,6 +287,7 @@ impl FunctionInfo {
         if self.name != other.name
             || self.return_type != other.return_type
             || self.native_return_type != other.native_return_type
+            || self.doc_return_type != other.doc_return_type
             || self.conditional_return != other.conditional_return
             || self.deprecation_message != other.deprecation_message
             || self.deprecated_replacement != other.deprecated_replacement

@@ -298,6 +298,7 @@ impl MethodInfo {
             && self.visibility == other.visibility
             && self.return_type == other.return_type
             && self.native_return_type == other.native_return_type
+            && self.doc_return_type == other.doc_return_type
             && self.description == other.description
             && self.extras_eq(other)
             && self.has_scope_attribute == other.has_scope_attribute

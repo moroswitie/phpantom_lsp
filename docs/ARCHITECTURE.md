@@ -873,8 +873,12 @@ to guess it.
   `doc_type.is_none()` and copies the ancestor's doc type with its type;
   the nearest ancestor is visited first, so the nearest documented one
   wins. A written tag is also the element whose own (possibly empty) text
-  wins over the ancestor's. Guard: rule `no_doc_type_guessing` (the old
-  `effective == native` helpers never return).
+  wins over the ancestor's. Each record's `signature_eq` compares the
+  field, so an edit that writes or removes such a tag, even one equal to
+  the native type, evicts the cached class and its dependants
+  (`evict_batch_resolved_classes`, `src/parser/ast_publish.rs`). Guard:
+  rule `no_doc_type_guessing` (the old `effective == native` helpers
+  never return).
 - **Whether a call is a `define()` declaration.** The owner is
   `src/parser/define_call.rs`: `define_call` recognises one call (callee
   `define` in any case, with or without one leading backslash, a non-empty

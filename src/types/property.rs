@@ -202,6 +202,7 @@ impl PropertyInfo {
     pub fn signature_eq(&self, other: &PropertyInfo) -> bool {
         self.name == other.name
             && self.type_hint == other.type_hint
+            && self.doc_type == other.doc_type
             && self.visibility == other.visibility
             && self.is_static == other.is_static
             && self.is_readonly == other.is_readonly

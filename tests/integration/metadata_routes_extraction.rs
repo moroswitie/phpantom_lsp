@@ -19,8 +19,8 @@ use std::sync::Arc;
 use crate::common::{
     assert_var_type, assert_var_type_on, collect_diagnostics_with, completion_response,
     create_psr4_workspace, create_test_backend, create_test_backend_with_full_stubs,
-    definition_locations, goto_definition_at, hover_markdown, hover_markdown_on,
-    messages_with_code, offset_position, open_php, response_labels,
+    definition_locations, goto_definition_at, hover_markdown, hover_markdown_on, hover_text_at,
+    messages_with_code, offset_position, open_php, position_of, response_labels,
 };
 use phpantom_lsp::php_type::PhpType;
 use phpantom_lsp::types::{MethodInfo, ParameterInfo, PropertyInfo};
@@ -856,6 +856,123 @@ fn issue_23_written_doc_type_from_a_file_not_open() {
         ("$__f3", "string"),
     ] {
         assert_var_type_on(&backend, uri.as_str(), main, var, expected);
+    }
+}
+
+/// E1: a child between a documented parent and an undocumented grandchild.
+/// An edit writes one doc type on the child, equal to the native type, in
+/// place of a placeholder comment; the grandchild then inherits it.
+const E1: &str = r#"<?php
+class ParentClass {
+    /**
+     * @param positive-int $id
+     * @return non-empty-string
+     */
+    public function find(int $id): string { return 'x'; }
+    /** @var non-empty-string */
+    public string $label = 'x';
+}
+class ChildClass extends ParentClass {
+    // find
+    public function find(int $id): string { return ''; }
+    // label
+    public string $label = '';
+}
+class GrandchildClass extends ChildClass {}
+"#;
+
+/// Another file reading E1's grandchild.
+const E1_CALLER: &str = "<?php
+$__e1 = (new GrandchildClass())->find(1);
+$__e2 = (new GrandchildClass())->label;
+";
+
+/// Replace the whole text of the open document `uri`, as an editor does.
+async fn change_php(backend: &Backend, uri: &Uri, version: i32, text: &str) {
+    backend
+        .did_change(DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier {
+                text_document_identifier: TextDocumentIdentifier { uri: uri.clone() },
+                version,
+            },
+            content_changes: vec![
+                TextDocumentContentChangeEvent::TextDocumentContentChangeWholeDocument(
+                    TextDocumentContentChangeWholeDocument {
+                        text: text.to_string(),
+                    },
+                ),
+            ],
+        })
+        .await;
+}
+
+/// The type the hover on `var` in the open document `uri` gives it.
+async fn var_type_in(backend: &Backend, uri: &Uri, content: &str, var: &str) -> String {
+    let position = position_of(content, var);
+    let markdown = hover_text_at(backend, uri, position.line, position.character + 1)
+        .await
+        .unwrap_or_else(|| panic!("expected a hover on {var}"));
+    let prefix = format!("{var} = ");
+    markdown
+        .lines()
+        .find_map(|line| line.strip_prefix(prefix.as_str()))
+        .unwrap_or_else(|| panic!("no type for {var} in:\n{markdown}"))
+        .to_string()
+}
+
+/// An edit that writes, then removes, a doc type equal to the native one
+/// refreshes what another file was already told. Each edit changes one
+/// fact only, so each comparison that notices an edit is checked alone.
+///
+/// Spec: INH-001, INH-010, INH-014; decisions D-01, D-03.
+#[tokio::test]
+async fn issue_23_written_doc_type_after_an_edit() {
+    let declarations = Uri::parse("file:///Declarations.php").unwrap();
+    let caller = Uri::parse("file:///caller.php").unwrap();
+    // The placeholder an edit replaces, the doc comment it writes, the
+    // variable whose type shows the fact (`None`: the call's first
+    // parameter in signature help), and the answer before the edit (the
+    // parent's type) and after it (the child's).
+    for (placeholder, doc, var, inherited, written) in [
+        (
+            "// find",
+            "/** @return string */",
+            Some("$__e1"),
+            "non-empty-string",
+            "string",
+        ),
+        (
+            "// find",
+            "/** @param int $id */",
+            None,
+            "positive-int $id",
+            "int $id",
+        ),
+        (
+            "// label",
+            "/** @var string */",
+            Some("$__e2"),
+            "non-empty-string",
+            "string",
+        ),
+    ] {
+        let backend = create_test_backend();
+        open_php(&backend, &declarations, E1).await;
+        open_php(&backend, &caller, E1_CALLER).await;
+        let answer = async || match var {
+            Some(var) => var_type_in(&backend, &caller, E1_CALLER, var).await,
+            None => {
+                let call = "(new GrandchildClass())->find(";
+                let params = signature_params(&backend, &caller, E1_CALLER, call).await;
+                params[0].typed.clone()
+            }
+        };
+
+        assert_eq!(answer().await, inherited, "{doc}: before the edit");
+        change_php(&backend, &declarations, 2, &E1.replace(placeholder, doc)).await;
+        assert_eq!(answer().await, written, "{doc}: after writing it");
+        change_php(&backend, &declarations, 3, E1).await;
+        assert_eq!(answer().await, inherited, "{doc}: after removing it");
     }
 }
 

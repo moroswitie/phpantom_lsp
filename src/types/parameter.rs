@@ -104,6 +104,7 @@ impl ParameterInfo {
         self.name == other.name
             && self.is_required == other.is_required
             && self.type_hint == other.type_hint
+            && self.doc_type == other.doc_type
             && self.default_value == other.default_value
             && self.is_variadic == other.is_variadic
             && self.is_reference == other.is_reference
