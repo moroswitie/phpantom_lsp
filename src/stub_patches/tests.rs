@@ -514,3 +514,51 @@ fn a_patched_return_type_is_the_methods_doc_type() {
     assert_eq!(current.return_type.as_ref(), Some(&t_value));
     assert_eq!(current.doc_return_type.as_ref(), Some(&t_value));
 }
+
+/// A stub tag that only restates its native type (phpstorm-stubs'
+/// `@return int the number of elements` on `count(): int`) counts as
+/// unwritten, so the method inherits from its ancestor; a tag that refines
+/// the native type, and the description, stay.
+#[test]
+fn a_stub_tag_restating_its_native_type_is_not_a_doc_type() {
+    let mut class = empty_class("SplDoublyLinkedList");
+    let int = PhpType::parse("int");
+    let count = crate::types::MethodInfo {
+        name: atom("count"),
+        return_type: Some(int.clone()),
+        native_return_type: Some(int.clone()),
+        doc_return_type: Some(int.clone()),
+        parameters: vec![crate::types::ParameterInfo {
+            doc_type: Some(int.clone()),
+            ..param("$index", "int")
+        }]
+        .into(),
+        ..Default::default()
+    };
+    let positive = PhpType::parse("int<0, max>");
+    let offset = crate::types::MethodInfo {
+        name: atom("offsetGet"),
+        return_type: Some(positive.clone()),
+        native_return_type: Some(int),
+        doc_return_type: Some(positive.clone()),
+        ..Default::default()
+    };
+    class.methods.push(std::sync::Arc::new(count));
+    class.methods.push(std::sync::Arc::new(offset));
+
+    apply_class_stub_patches(&mut class);
+
+    let method = |name: &str| {
+        class
+            .methods
+            .iter()
+            .find(|m| m.name == name)
+            .expect("method")
+            .clone()
+    };
+    let count = method("count");
+    assert_eq!(count.doc_return_type, None);
+    assert_eq!(count.return_type, Some(PhpType::parse("int")));
+    assert_eq!(count.parameters[0].doc_type, None);
+    assert_eq!(method("offsetGet").doc_return_type, Some(positive));
+}

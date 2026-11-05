@@ -13,6 +13,7 @@ use crate::types::{ClassInfo, MethodInfo};
 ///
 /// This is the class-level counterpart of [`apply_function_stub_patches`].
 pub fn apply_class_stub_patches(class: &mut ClassInfo) {
+    forget_filler_doc_types(class);
     match class.name.as_str() {
         "IteratorIterator" => patch_iterator_iterator(class),
         "RecursiveIteratorIterator" => patch_recursive_iterator_iterator(class),
@@ -33,6 +34,52 @@ pub fn apply_class_stub_patches(class: &mut ClassInfo) {
     }
     mark_benevolent_methods(class);
     mark_impure_methods(class);
+}
+
+/// Forget the PHPDoc types phpstorm-stubs writes only to restate a native type.
+///
+/// phpstorm-stubs documents nearly every built-in method, and many of
+/// those tags repeat the native declaration to carry a description:
+/// `SplDoublyLinkedList::count(): int` says `@return int the number of
+/// elements`, and `NoRewindIterator::current(): mixed` says `@return
+/// mixed`.  In user code a written tag is a decision that overrides the
+/// ancestor, even one equal to the native type; in the stubs such a tag
+/// decides nothing, and it would hide `Countable::count()`'s
+/// `@return int<0,max>` and `IteratorIterator::current()`'s `@return
+/// TValue`.  So a stub tag equal to its native type counts as unwritten,
+/// and the method inherits from its ancestor like any undocumented
+/// override, within its own native type.  Its description is kept.
+fn forget_filler_doc_types(class: &mut ClassInfo) {
+    for idx in 0..class.methods.len() {
+        let method = &class.methods[idx];
+        let filler_return = is_filler(
+            method.doc_return_type.as_ref(),
+            method.native_return_type.as_ref(),
+        );
+        let filler_params = method
+            .parameters
+            .iter()
+            .any(|p| is_filler(p.doc_type.as_ref(), p.native_type_hint.as_ref()));
+        if !filler_return && !filler_params {
+            continue;
+        }
+        update_method_at(class, idx, |method| {
+            if filler_return {
+                method.doc_return_type = None;
+            }
+            for p in method.parameters.make_mut() {
+                if is_filler(p.doc_type.as_ref(), p.native_type_hint.as_ref()) {
+                    p.doc_type = None;
+                }
+            }
+        });
+    }
+}
+
+/// Whether a stub's PHPDoc type only restates its native type.
+fn is_filler(doc: Option<&PhpType>, native: Option<&PhpType>) -> bool {
+    doc.zip(native)
+        .is_some_and(|(doc, native)| doc.equivalent(native))
 }
 
 /// Built-in methods that change their object's state while returning a

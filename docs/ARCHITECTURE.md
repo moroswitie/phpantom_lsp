@@ -797,7 +797,7 @@ This is analogous to the [Laravel Class Patches](#laravel-class-patches) system 
 
 #### Class patches
 
-Class stub patches work the same way but are applied by `apply_class_stub_patches(class)` in `parse_and_cache_content_versioned` for URIs starting with `phpantom-stub://` or `phpantom-stub-fn://`. Current class patches add `@template` parameters, `@extends`/`@implements` generics, and constructor bindings to the SPL iterator wrappers (`IteratorIterator` and its subclasses), which phpstorm-stubs leave ungeneric. This lets generic types flow through the wrapper (e.g. `new LimitIterator($rules)` over an `ArrayIterator<int, Rule>` yields `Rule` from `current()`). Other class patches tighten individual method return types on `ReflectionClass`, `SimpleXMLElement`, and the DOM classes. The full inventory is in the `stub_patches` module documentation.
+Class stub patches work the same way but are applied by `apply_class_stub_patches(class)` in `parse_and_cache_content_versioned` for URIs starting with `phpantom-stub://` or `phpantom-stub-fn://`. Current class patches add `@template` parameters, `@extends`/`@implements` generics, and constructor bindings to the SPL iterator wrappers (`IteratorIterator` and its subclasses), which phpstorm-stubs leave ungeneric. This lets generic types flow through the wrapper (e.g. `new LimitIterator($rules)` over an `ArrayIterator<int, Rule>` yields `Rule` from `current()`). Other class patches tighten individual method return types on `ReflectionClass`, `SimpleXMLElement`, and the DOM classes. Before any of them, `forget_filler_doc_types` drops every stub `@return` or `@param` type that only restates its native type, so such a method inherits its ancestor's richer type (see Single Owners). The full inventory is in the `stub_patches` module documentation.
 
 ### Runtime Lookup — Constants
 
@@ -878,7 +878,12 @@ to guess it.
   the native type, evicts the cached class and its dependants
   (`evict_batch_resolved_classes`, `src/parser/ast_publish.rs`). Guard:
   rule `no_doc_type_guessing` (the old `effective == native` helpers
-  never return).
+  never return). One exception, made where the stubs are patched: a
+  phpstorm-stubs tag that only restates its native type, such as
+  `SplDoublyLinkedList::count()`'s `@return int the number of elements`
+  on `: int`, counts as unwritten (`forget_filler_doc_types`,
+  `src/stub_patches/classes.rs`), so the built-in override inherits
+  `Countable::count()`'s `@return int<0,max>` like an undocumented one.
 - **Whether a PHPDoc type may stand in for a native type.** The owner is
   `doc_type_widens_native` (`src/docblock/type_override.rs`): a PHPDoc
   type provably wider than the native type gives way to it, since PHP
