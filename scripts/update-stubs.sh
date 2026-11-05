@@ -86,8 +86,8 @@ commit = "${COMMIT}"
 sha256 = "${HASH}"
 EOF
 
-echo "Removing stubs/ cache so next build fetches fresh..."
-rm -rf stubs/
+echo "Removing local declarations so next build uses the new pin..."
+rm -rf stubs/jetbrains/
 
 echo ""
 echo "Done! Pinned to ${REPO} @ ${SHORT} (${HASH})"

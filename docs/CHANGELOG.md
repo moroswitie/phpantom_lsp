@@ -464,6 +464,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Internal
 
+- **Rebuild only for changes to the binary.** Repeated build and test commands reuse their existing artifacts, and editing tests, documentation, or examples no longer recompiles PHPantom. Source, stub and version changes still rebuild it, and the `-dirty` version suffix now refers only to uncommitted changes in compiled files. Contributed by @moroswitie.
 - **Faster benchmark checks on pull requests.** Latency benchmarks now run split across four runners, and benchmark alerts on fork pull requests show up in the job summary instead of failing on a permission error. Contributed by @shuvroroy.
 
 ## [0.11.1] - 2026-10-07

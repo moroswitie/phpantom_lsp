@@ -2,7 +2,8 @@
 /.codelite
 *.phprj
 *.workspace
-/stubs/
+/stubs/*
+!/stubs/README.md
 sandbox.php
 .cargo
 /.phpantom.toml

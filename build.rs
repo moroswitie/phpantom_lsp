@@ -40,25 +40,19 @@
 //!
 //! ## Re-run strategy
 //!
-//! The `stubs/` directory is gitignored, so Cargo's default "re-run when
-//! any package file changes" behaviour does not notice when stubs are
-//! downloaded.  Explicit `rerun-if-changed` on paths inside `stubs/` also
-//! fails when the directory doesn't exist yet.
-//!
-//! Instead we watch the project root directory (`.`).  Its mtime changes
-//! whenever a direct child like `stubs/` is created or removed.  We also
-//! watch `build.rs` and `stubs.lock` for targeted rebuilds.
-//!
-//! To avoid unnecessary recompilation of the main crate we compare the
-//! newly generated content against the existing output file and only write
-//! when something actually changed.  This way `rustc` sees a stable mtime
-//! on `stub_map_generated.rs` and skips recompilation when the stubs
-//! haven't changed.
+//! Cargo recompiles PHPantom whenever this script reruns, so only inputs that
+//! end up in the binary are watched. Cargo recursively scans watched
+//! directories. Watch the tracked `stubs/` directory for local selection
+//! changes, and existing declaration inputs for immediate deletion detection.
+//! Never watch the project root, build output, or missing optional files:
+//! those cause repeated rebuilds. Downloaded PHP inputs beneath `OUT_DIR` are
+//! watched separately from generated Rust output. Git refs and the tracked
+//! files compiled into the binary determine the embedded version.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use flate2::read::GzDecoder;
@@ -67,6 +61,9 @@ use tar::Archive;
 #[path = "src/stub_map.rs"]
 mod stub_map;
 use stub_map::parse_section;
+
+#[path = "build_support/git_version.rs"]
+mod git_version;
 
 /// Relative path (from the stubs root) to the stubs map file.
 const MAP_FILE_REL: &str = "jetbrains/phpstorm-stubs/PhpStormStubsMap.php";
@@ -84,41 +81,50 @@ struct StubsLock {
 
 /// Locate the stubs root directory.
 ///
-/// 1. If `CARGO_MANIFEST_DIR/stubs` exists (local dev), use that.
+/// 1. If current checkout-local declarations exist, use those.
 /// 2. Otherwise, download into `OUT_DIR/stubs` (safe during `cargo publish`).
-fn resolve_stubs_root() -> (PathBuf, bool) {
+fn resolve_stubs_root(lock: &StubsLock) -> (PathBuf, bool) {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
     let local_stubs = Path::new(&manifest_dir).join("stubs");
 
-    if local_stubs.join(MAP_FILE_REL).exists() {
-        // Stubs already present in source tree (normal local development).
-        // Still need to check staleness via .commit marker.
+    watch_stub_selection(&local_stubs.join(STUBS_DIR_REL));
+    if stubs_are_current(&local_stubs, lock) {
         return (local_stubs, false);
+    }
+    if local_stubs.join(MAP_FILE_REL).is_file() {
+        println!(
+            "cargo:warning=Ignoring stubs/{STUBS_DIR_REL}: its .commit marker does not match \
+             stubs.lock, so the pinned download is used instead."
+        );
     }
 
     // Stubs not in source tree — use OUT_DIR so we never modify the source
     // directory. This is required for `cargo publish` verification.
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR not set");
     let out_stubs = Path::new(&out_dir).join("stubs");
-    let needs_fetch = !out_stubs.join(MAP_FILE_REL).exists();
+    let needs_fetch = !stubs_are_current(&out_stubs, lock);
     (out_stubs, needs_fetch)
 }
 
+fn stubs_are_current(root: &Path, lock: &StubsLock) -> bool {
+    root.join(MAP_FILE_REL).is_file()
+        && fs::read_to_string(root.join(STUBS_DIR_REL).join(".commit"))
+            .is_ok_and(|marker| marker.trim() == lock.commit)
+}
+
 fn main() {
-    // Watch the project root directory so that creating/removing `stubs/`
-    // (which is gitignored) is detected via the directory mtime change.
-    // Without this, Cargo's default "any package file" check ignores
-    // gitignored paths, and explicit watches on non-existent paths don't
-    // reliably trigger when they first appear.
-    println!("cargo:rerun-if-changed=.");
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
+    let local_stubs = Path::new(&manifest_dir).join("stubs");
+    assert!(
+        local_stubs.is_dir(),
+        "Missing stubs/ directory. Restore it with `git restore stubs/README.md` \
+         (or extract it again from the source package) before building."
+    );
+    println!("cargo:rerun-if-changed={}", local_stubs.display());
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=build_support/git_version.rs");
     println!("cargo:rerun-if-changed=stubs.lock");
     println!("cargo:rerun-if-changed=src/stub_map.rs");
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_OFFLINE_STUBS");
-    // Re-run when HEAD moves (commit, checkout, tag) so the embedded
-    // version string stays current.
-    println!("cargo:rerun-if-changed=.git/HEAD");
-    println!("cargo:rerun-if-changed=.git/refs/tags");
 
     // ── Git version string ──────────────────────────────────────────
     // Explicit override:  release CI sets PHPANTOM_GIT_VERSION to the
@@ -134,15 +140,7 @@ fn main() {
     let git_version = env::var("PHPANTOM_GIT_VERSION")
         .ok()
         .filter(|v| !v.is_empty())
-        .or_else(|| {
-            std::process::Command::new("git")
-                .args(["describe", "--tags", "--always", "--dirty"])
-                .output()
-                .ok()
-                .filter(|o| o.status.success())
-                .and_then(|o| String::from_utf8(o.stdout).ok())
-                .map(|s| s.trim().to_string())
-        })
+        .or_else(|| git_version::describe(Path::new(&manifest_dir)))
         .unwrap_or_else(|| env::var("CARGO_PKG_VERSION").unwrap_or_default());
     println!("cargo:rustc-env=PHPANTOM_GIT_VERSION={git_version}");
 
@@ -159,37 +157,22 @@ fn main() {
                 stubs_path.display()
             );
         }
-        println!("cargo:rerun-if-changed={}", map_path.display());
         println!("cargo:rustc-env=PHPANTOM_STUBS_VERSION=external");
         generate_stub_map(&stubs_path);
         return;
     }
 
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
     let lock = read_stubs_lock(&manifest_dir);
 
-    let (stubs_root, mut needs_fetch) = resolve_stubs_root();
-
-    // Check whether the stubs need to be (re-)fetched.  A `.commit`
-    // marker file inside the stubs directory records which commit was
-    // last downloaded.  When `stubs.lock` pins a different commit the
-    // stubs are stale and must be replaced.
-    if !needs_fetch {
-        let stubs_path = stubs_root.join(STUBS_DIR_REL);
-        let commit_marker = stubs_path.join(".commit");
-        if let Ok(marker) = fs::read_to_string(&commit_marker) {
-            if marker.trim() != lock.commit {
-                needs_fetch = true;
-            }
-        } else {
-            // Stubs exist but no marker — written before this check was
-            // added.  Treat as stale so we re-fetch and create the marker.
-            needs_fetch = true;
-        }
-    }
+    let (stubs_root, needs_fetch) = resolve_stubs_root(&lock);
 
     if needs_fetch && env::var_os("CARGO_FEATURE_OFFLINE_STUBS").is_some() {
-        eprintln!(
+        let selected = stubs_root.join(STUBS_DIR_REL);
+        if stubs_root.is_dir() && !selected.is_dir() {
+            println!("cargo:rerun-if-changed={}", stubs_root.display());
+        }
+        watch_stub_selection(&selected);
+        println!(
             "cargo:warning=Stubs are unavailable or stale; building without them because the offline-stubs feature is enabled."
         );
         println!("cargo:rustc-env=PHPANTOM_STUBS_VERSION=none");
@@ -200,14 +183,16 @@ fn main() {
     if needs_fetch {
         let stubs_path = stubs_root.join(STUBS_DIR_REL);
         if stubs_path.exists() {
+            // Progress goes to stderr (shown with `-vv`): Cargo replays
+            // `cargo:warning` lines on every later build, long after the event.
             eprintln!(
-                "cargo:warning=Stubs are stale (expected commit {}), re-fetching...",
+                "Stubs are stale (expected commit {}), re-fetching...",
                 &lock.commit[..lock.commit.len().min(10)]
             );
             // Remove the old stubs so fetch_stubs writes a clean tree.
             let _ = fs::remove_dir_all(&stubs_path);
         } else {
-            eprintln!("cargo:warning=Stubs not found, fetching from GitHub...");
+            eprintln!("Stubs not found, fetching from GitHub...");
         }
         // Failing here is deliberate: a binary without stubs reports every
         // built-in function and class as unknown, and a build warning is
@@ -229,6 +214,7 @@ fn main() {
     let short = &lock.commit[..lock.commit.len().min(10)];
     println!("cargo:rustc-env=PHPANTOM_STUBS_VERSION=master@{}", short);
 
+    watch_stub_selection(&stubs_root.join(STUBS_DIR_REL));
     generate_stub_map(&stubs_root.join(STUBS_DIR_REL));
 }
 
@@ -236,6 +222,7 @@ fn main() {
 /// `PhpStormStubsMap.php` in `stubs_path` references.
 fn generate_stub_map(stubs_path: &Path) {
     let map_path = stubs_path.join("PhpStormStubsMap.php");
+    println!("cargo:rerun-if-changed={}", map_path.display());
     let map_content = fs::read_to_string(&map_path)
         .unwrap_or_else(|e| panic!("Could not read {}: {e}", map_path.display()));
 
@@ -256,6 +243,21 @@ fn generate_stub_map(stubs_path: &Path) {
     }
     for path in constant_map.values() {
         unique_files.insert(path.as_str());
+    }
+
+    let mut watched = BTreeSet::new();
+    for rel in &unique_files {
+        let mut path = stubs_path.join(rel);
+        // Missing declarations are omitted from the generated map. Watch an
+        // existing ancestor so making one available regenerates it immediately.
+        while !path.exists() {
+            if !path.pop() {
+                break;
+            }
+        }
+        if watched.insert(path.clone()) {
+            println!("cargo:rerun-if-changed={}", path.display());
+        }
     }
 
     // Only keep files that actually exist on disk.
@@ -360,6 +362,18 @@ fn generate_stub_map(stubs_path: &Path) {
     out.push_str("];\n");
 
     write_if_changed(&out);
+}
+
+/// Watch existing selection inputs; watch their directory only while incomplete.
+fn watch_stub_selection(stubs_path: &Path) {
+    for name in ["PhpStormStubsMap.php", ".commit"] {
+        let path = stubs_path.join(name);
+        if path.is_file() {
+            println!("cargo:rerun-if-changed={}", path.display());
+        } else if stubs_path.is_dir() {
+            println!("cargo:rerun-if-changed={}", stubs_path.display());
+        }
+    }
 }
 
 // ── Stub fetching ───────────────────────────────────────────────────────
@@ -519,7 +533,7 @@ fn fetch_stubs(stubs_root: &Path, lock: &StubsLock) -> Result<(), Box<dyn std::e
     );
 
     eprintln!(
-        "cargo:warning=Downloading phpstorm-stubs from {} pinned at {}",
+        "Downloading phpstorm-stubs from {} pinned at {}",
         lock.repo, short
     );
 
@@ -545,7 +559,7 @@ fn fetch_stubs(stubs_root: &Path, lock: &StubsLock) -> Result<(), Box<dyn std::e
         )
         .into());
     }
-    eprintln!("cargo:warning=SHA-256 verified: {}", actual_hash);
+    eprintln!("SHA-256 verified: {}", actual_hash);
 
     let decoder = GzDecoder::new(&tarball_bytes[..]);
     let mut archive = Archive::new(decoder);
@@ -600,17 +614,22 @@ fn fetch_stubs(stubs_root: &Path, lock: &StubsLock) -> Result<(), Box<dyn std::e
         if entry.header().entry_type().is_dir() {
             fs::create_dir_all(&dest_path)?;
         } else if entry.header().entry_type().is_file() {
-            let mut file = fs::File::create(&dest_path)?;
-            std::io::copy(&mut entry, &mut file)?;
+            // Preserve the pinned archive's timestamps. These files become
+            // watched inputs; extraction-time timestamps would invalidate the
+            // build-script result on the very next Cargo command.
+            entry.unpack(&dest_path)?;
         }
     }
 
     // Write a commit marker so subsequent builds can detect staleness.
     let commit_marker = target_dir.join(".commit");
-    fs::write(&commit_marker, &lock.commit)?;
+    let mut marker = fs::File::create(&commit_marker)?;
+    marker.write_all(lock.commit.as_bytes())?;
+    // The marker describes the same immutable snapshot as the map.
+    marker.set_modified(fs::metadata(target_dir.join("PhpStormStubsMap.php"))?.modified()?)?;
 
     eprintln!(
-        "cargo:warning=Successfully downloaded phpstorm-stubs from {} @ {}",
+        "Successfully downloaded phpstorm-stubs from {} @ {}",
         lock.repo, short
     );
     Ok(())
@@ -636,9 +655,7 @@ fn escape(s: &str) -> String {
 
 /// Write the generated file only if its content has actually changed.
 ///
-/// This avoids bumping the mtime on `stub_map_generated.rs` when nothing
-/// changed, which in turn prevents `rustc` from unnecessarily recompiling
-/// the main crate.
+/// Keep the generated file's timestamp stable when its contents are unchanged.
 fn write_if_changed(content: &str) {
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR not set");
     let dest_path = Path::new(&out_dir).join("stub_map_generated.rs");

@@ -12,9 +12,31 @@ cargo build --release   # build the binary
 
 ## Build
 
-The `build.rs` script automatically fetches the latest [JetBrains phpstorm-stubs](https://github.com/JetBrains/phpstorm-stubs) from GitHub and embeds them directly into the binary. This gives the LSP full knowledge of built-in PHP classes, functions, and constants with no runtime dependencies.
+The `build.rs` script automatically fetches the [JetBrains phpstorm-stubs](https://github.com/JetBrains/phpstorm-stubs) version pinned in `stubs.lock`, verifies the download's SHA-256 hash, and embeds the declarations directly into the binary. This gives the LSP full knowledge of built-in PHP classes, functions, and constants with no runtime dependencies.
 
-The stubs are downloaded on first build and cached in `stubs/`. To update to the latest stubs, delete the `stubs/` directory and rebuild.
+Downloads are cached beneath Cargo's `OUT_DIR`, inside the build directory. Run
+`scripts/update-stubs.sh` to update the pin and hash, then rebuild. Deleting a
+cache alone downloads the same pinned version again.
+
+The build automatically selects checkout-local declarations at
+`stubs/jetbrains/phpstorm-stubs/` when `PhpStormStubsMap.php` is present. Their
+`.commit` marker must match `stubs.lock`; missing or stale markers select the
+current download cache, fetching it if needed, and the build warns that the
+local tree was ignored. `PHPANTOM_STUBS_DIR` takes precedence over both local
+declarations and the download cache.
+
+Keep the tracked `stubs/` directory and its README: Cargo watches `stubs/` for
+local declarations being added or removed. To discard local declarations, remove
+only `stubs/jetbrains/`, as the update script does. If the whole directory was
+deleted, restore it with `git restore stubs/README.md` before building.
+
+Only changes to what is compiled into the binary rebuild PHPantom: the Rust
+sources, the build script, `Cargo.toml`, `Cargo.lock`, `stubs.lock`, and the
+selected stubs. Editing tests, documentation, or examples, or staging changes,
+never does. The embedded Git version follows commits and tags, including in
+linked worktrees, and ends in `-dirty` when those compiled files have
+uncommitted changes. Release builders can set `PHPANTOM_GIT_VERSION`
+explicitly; source packages without Git use the package version.
 
 If the download fails, the build fails. A binary without the stubs would report every built-in function and class as unknown, so it is not built by accident.
 
@@ -42,11 +64,12 @@ Both are off by default, so an editor build compiles neither.
 
 `offline-stubs` keeps the build script from reaching the network: when
 the stubs are missing or stale it embeds an empty stub index and
-continues instead of downloading them. Stubs already present in
-`stubs/` are still embedded, so a machine that has built once keeps its
-standard library. A build without them resolves only the project's own
-code, so use it when the build must not make network calls rather than
-to save time. The language server shows a warning when it starts
+continues instead of downloading them. Current stubs at
+`stubs/jetbrains/phpstorm-stubs/` or in `PHPANTOM_STUBS_DIR` are still
+embedded. Cargo keeps a separate build directory for each feature set, so a
+download made by an earlier build without this feature is not reused. A build
+without stubs resolves only the project's own code, so use it when the build
+must not make network calls rather than to save time. The language server shows a warning when it starts
 without stubs, and so do `analyze` and `fix`.
 
 `semantic-export` compiles `phpantom_lsp::semantic_export`, an API for
