@@ -1,41 +1,7 @@
 //! The types of `static` and `global` locals (D-17, issues 12 to 15 and
 //! 25), as PhpStorm 2025.2.2 infers them.
 
-use crate::common::{create_test_backend, hover_at, hover_text, offset_position};
-
-/// Hover `delta` characters into the `nth` (0-based) occurrence of
-/// `needle` in `content`, parsed as `file:///test.php`.
-fn hover_markdown(content: &str, needle: &str, delta: u32, nth: usize) -> Option<String> {
-    let (offset, _) = content
-        .match_indices(needle)
-        .nth(nth)
-        .unwrap_or_else(|| panic!("occurrence {nth} of {needle:?} not found"));
-    let position = offset_position(content, offset + delta as usize);
-    let backend = create_test_backend();
-    hover_at(
-        &backend,
-        "file:///test.php",
-        content,
-        position.line,
-        position.character,
-    )
-    .map(|hover| hover_text(&hover).to_string())
-}
-
-/// Shorthand: hover on `"$var ="` (delta 1) and return the markdown.
-fn var_hover(content: &str, var: &str) -> String {
-    hover_markdown(content, &format!("{var} ="), 1, 0)
-        .unwrap_or_else(|| panic!("expected a hover on {var}"))
-}
-
-/// Assert the variable hover of `var` renders `"{var} = {expected}"`.
-fn assert_var_type(content: &str, var: &str, expected: &str) {
-    let markdown = var_hover(content, var);
-    assert!(
-        markdown.contains(&format!("{var} = {expected}\n")),
-        "{var}: expected `{expected}`, got:\n{markdown}"
-    );
-}
+use crate::common::{assert_var_type, var_hover};
 
 const S1_STATIC_LITERAL: &str = r#"<?php
 function f(): void {

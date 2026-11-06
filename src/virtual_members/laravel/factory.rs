@@ -310,6 +310,7 @@ fn relationship_param(name: &str, type_str: &str) -> ParameterInfo {
         is_required: false,
         type_hint: Some(PhpType::parse(type_str)),
         native_type_hint: None,
+        doc_type: None,
         description: None,
         default_value: None,
         is_variadic: false,

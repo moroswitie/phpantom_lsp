@@ -2,95 +2,83 @@
 //! interfaces and its traits (D-03 to D-06, issues 23 and 24). Types are
 //! PHPStan 2.3.1's; texts follow PhpStorm 2025.2.2 (D-10).
 
-use crate::common::{create_test_backend, hover_at, hover_text, offset_position};
+use crate::common::{assert_var_type, hover_markdown};
 
-/// Hover `delta` characters into the `nth` (0-based) occurrence of
-/// `needle` in `content`, parsed as `file:///test.php`.
-fn hover_markdown(content: &str, needle: &str, delta: u32, nth: usize) -> Option<String> {
-    let (offset, _) = content
-        .match_indices(needle)
-        .nth(nth)
-        .unwrap_or_else(|| panic!("occurrence {nth} of {needle:?} not found"));
-    let position = offset_position(content, offset + delta as usize);
-    let backend = create_test_backend();
-    hover_at(
-        &backend,
-        "file:///test.php",
-        content,
-        position.line,
-        position.character,
-    )
-    .map(|hover| hover_text(&hover).to_string())
+#[test]
+fn inherited_doc_union_respects_each_native_return_alternative() {
+    let source = r#"<?php
+interface Values {
+    /** @return bool|list<string> */
+    public function values(): bool|array;
 }
-
-/// Shorthand: hover on `"$var ="` (delta 1) and return the markdown.
-fn var_hover(content: &str, var: &str) -> String {
-    hover_markdown(content, &format!("{var} ="), 1, 0)
-        .unwrap_or_else(|| panic!("expected a hover on {var}"))
+class NarrowValues implements Values {
+    public function values(): false|array { return ['value']; }
 }
-
-/// Assert the variable hover of `var` renders `"{var} = {expected}"`.
-fn assert_var_type(content: &str, var: &str, expected: &str) {
-    let markdown = var_hover(content, var);
-    assert!(
-        markdown.contains(&format!("{var} = {expected}\n")),
-        "{var}: expected `{expected}`, got:\n{markdown}"
-    );
+class BroadValues implements Values {
+    public function values(): bool|array { return ['value']; }
 }
-
-const D3_INHERIT: &str = r#"<?php
-class P {
-    /**
-     * @param positive-int $id
-     * @param non-empty-string $name
-     * @return non-empty-string
-     */
-    public function find(int $id, string $name): string { return 'x'; }
-    /** @var non-empty-string */
-    public string $label = 'x';
-}
-class ExplicitEqual extends P {
-    /**
-     * @param int $id
-     * @return string
-     */
-    public function find(int $id, string $name): string { $__d1 = $id; $__d2 = $name; return ''; }
-    /** @var string */
-    public string $label = '';
-}
-class NoDoc extends P {
-    public function find(int $id, string $name): string { $__d3 = $id; $__d4 = $name; return 'x'; }
-    public string $label = 'x';
-}
-class DescriptionOnly extends P {
-    /** Only a summary, no tags. */
-    public function find(int $id, string $name): string { $__d5 = $id; $__d6 = $name; return 'x'; }
-}
-class Renamed extends P {
-    public function find(int $key, string $title): string { $__d7 = $key; $__d8 = $title; return 'x'; }
-}
-class Grand extends NoDoc {
-    public function find(int $id, string $name): string { $__d9 = $id; return 'x'; }
-}
-$__d10 = (new ExplicitEqual())->find(1, 'a');
-$__d11 = (new NoDoc())->find(1, 'a');
-$__d12 = (new ExplicitEqual())->label;
-$__d13 = (new NoDoc())->label;
-$__d14 = (new Grand())->find(1, 'a');
-interface I1 { /** @return non-empty-string */ public function name(): string; }
-interface I2 { /** @return lowercase-string */ public function name(): string; }
-class Impl1 implements I1 { public function name(): string { return 'x'; } }
-class Impl12 implements I1, I2 { public function name(): string { return 'x'; } }
-class Impl21 implements I2, I1 { public function name(): string { return 'x'; } }
-$__d15 = (new Impl1())->name();
-$__d16 = (new Impl12())->name();
-$__d17 = (new Impl21())->name();
-trait T { /** @return non-empty-string */ public function t(): string { return 'x'; } }
-class UsesT { use T; }
-class OverridesT { use T; public function t(): string { return 'x'; } }
-$__d18 = (new UsesT())->t();
-$__d19 = (new OverridesT())->t();
+$__narrow = (new NarrowValues())->values();
+$__broad = (new BroadValues())->values();
 "#;
+    assert_var_type(source, "$__narrow", "false|list<string>");
+    assert_var_type(source, "$__broad", "bool|list<string>");
+}
+
+#[test]
+fn inherited_return_caps_keep_the_declarations_resolved_class_names() {
+    let source = r#"<?php
+namespace {
+    class Pen { public function ink(): string { return "global"; } }
+    abstract class GlobalAccess implements \ArrayAccess {
+        public function offsetGet(mixed $offset): Pen { return new Pen(); }
+    }
+}
+namespace Models {
+    class Pen { public function ink(): int { return 1; } }
+    abstract class DirectAccess implements \ArrayAccess {
+        public function offsetGet(mixed $offset): Pen { return new Pen(); }
+    }
+}
+namespace Imported {
+    use Models\Pen;
+    abstract class ImportedAccess implements \ArrayAccess {
+        public function offsetGet(mixed $offset): Pen|false { return new Pen(); }
+    }
+}
+namespace Caller {
+    function read(\GlobalAccess $global, \Models\DirectAccess $direct, \Imported\ImportedAccess $imported): void {
+        $__global = $global[0];
+        $__globalResult = $__global->ink();
+        $__direct = $direct[0];
+        $__directResult = $__direct->ink();
+        $__imported = $imported[0];
+        if ($__imported !== false) {
+            $__importedResult = $__imported->ink();
+        }
+    }
+}
+"#;
+    for (var, expected) in [("$__direct", "Pen"), ("$__imported", "Pen|false")] {
+        let markdown =
+            hover_markdown(source, &format!("{var} ="), 1, 0).expect("array-access result hover");
+        if var == "$__direct" {
+            assert!(markdown.contains("namespace Models;"), "{var}: {markdown}");
+        }
+        assert!(
+            markdown.contains(&format!("{var} = {expected}\n")),
+            "{markdown}"
+        );
+    }
+    assert_var_type(source, "$__globalResult", "string");
+    assert_var_type(source, "$__directResult", "int");
+    assert_var_type(source, "$__importedResult", "int");
+    let global = hover_markdown(source, "$__global =", 1, 0).expect("global result hover");
+    assert!(global.contains("$__global = Pen\n"), "{global}");
+    assert!(!global.contains("namespace "), "{global}");
+}
+
+const D3_INHERIT: &str =
+    include_str!("../conformance/php-symbol-metadata/inheritance/partial-docs.php");
 
 const E1_SPEC_D8: &str = r#"<?php
 class P8 {
@@ -120,69 +108,8 @@ $__label = (new P8())->label;
 $__vendor = (new P8())->vendor;
 "#;
 
-const P7_DESCRIPTIONS: &str = r#"<?php
-
-/** @property string $name Parent tag text. */
-class TagParent { public function __get(string $n): mixed { return null; } }
-/** @property non-empty-string $name */
-class TagChildNoText extends TagParent {}
-/** @property non-empty-string $name Child tag text. */
-class TagChildText extends TagParent {}
-
-class MP {
-    /**
-     * Parent summary.
-     *
-     * @param positive-int $id Parent param text.
-     * @return non-empty-string Parent return text.
-     */
-    public function find(int $id): string { return 'x'; }
-
-    /** @var non-empty-string Parent label text. */
-    public string $label = 'x';
-}
-class MExplicitNoText extends MP {
-    /** @param int $id */
-    public function find(int $id): string { $__e = $id; return ''; }
-}
-class MNoDoc extends MP {
-    public function find(int $id): string { $__n = $id; return 'x'; }
-    public string $label = 'x';
-}
-class MSummaryOnly extends MP {
-    /** Child summary only. */
-    public function find(int $id): string { $__s = $id; return 'x'; }
-}
-class MInlineInherit extends MP {
-    /** {@inheritDoc} Child extra text. */
-    public function find(int $id): string { $__i = $id; return 'x'; }
-}
-class MTagInherit extends MP {
-    /** @inheritDoc */
-    public function find(int $id): string { $__t = $id; return 'x'; }
-}
-
-/** @property list<string> $items Tag text for items. */
-class OwnRealDoc {
-    /** @var array Real property text. */
-    public array $items = [];
-}
-
-function probe(TagChildNoText $a, TagChildText $b, MExplicitNoText $e, MNoDoc $n, MSummaryOnly $s, MInlineInherit $i, MTagInherit $t, OwnRealDoc $o): void {
-    $a->name;
-    $b->name;
-    $e->find(1);
-    $n->find(1);
-    $s->find(1);
-    $i->find(1);
-    $t->find(1);
-    $n->label;
-    $o->items;
-    $__ret_e = $e->find(1);
-    $__ret_n = $n->find(1);
-    $__items = $o->items;
-}
-"#;
+const P7_DESCRIPTIONS: &str =
+    include_str!("../conformance/php-symbol-metadata/docblocks/descriptions.php");
 
 /// An override without a docblock, with a summary only, with renamed
 /// parameters, or two levels down, takes the parent's parameter and
@@ -291,7 +218,6 @@ fn issue_24_member_hover_shows_inherited_var_type_and_text() {
 ///
 /// Spec: INH-004.
 #[test]
-#[ignore = "issue 23 / D-06: an explicit child @param equal to the native type is dropped for the parent's tag"]
 fn issue_23_explicit_param_equal_to_native_wins() {
     assert_var_type(D3_INHERIT, "$__d1", "int");
 }
@@ -301,7 +227,6 @@ fn issue_23_explicit_param_equal_to_native_wins() {
 ///
 /// Spec: INH-004.
 #[test]
-#[ignore = "issue 23 / D-06: an explicit child @return equal to the native type is dropped for the parent's tag"]
 fn issue_23_explicit_return_equal_to_native_wins() {
     assert_var_type(D3_INHERIT, "$__d10", "string");
 }

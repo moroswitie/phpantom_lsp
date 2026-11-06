@@ -376,7 +376,7 @@ fn substitute_in_method(method: &mut MethodInfo, aliases: &HashMap<String, PhpTy
         for param in method.parameters.make_mut() {
             // A `@method` tag's parameter mirrors its docblock type into
             // the native slot, which has to follow it.
-            if is_virtual && param.native_type_hint == param.type_hint {
+            if is_virtual && param.doc_type.is_some() {
                 sub(&mut param.native_type_hint);
             }
             sub(&mut param.type_hint);

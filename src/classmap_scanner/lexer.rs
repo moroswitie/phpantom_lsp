@@ -396,13 +396,19 @@ fn scan<const SYMBOLS: bool>(content: &[u8], result: &mut ScanResult) {
                     continue;
                 }
 
-                // define('NAME', ...)
-                if b == b'd'
+                // define('NAME', ...), in any case and with whitespace
+                // before the `(`.  This is a prefilter for the constant
+                // index: it must accept everything the parser's
+                // recogniser (`parser/define_call.rs`) does, so a
+                // `\define(` or a `define()` inside `defined('X') or …`
+                // counts too.  A false positive only costs a lazy parse
+                // that finds nothing.
+                if (b == b'd' || b == b'D')
                     && i + 6 <= len
-                    && &content[i..i + 6] == b"define"
-                    && (i + 6 < len && content[i + 6] == b'(')
+                    && content[i..i + 6].eq_ignore_ascii_case(b"define")
+                    && let Some(open) = paren_after_whitespace(content, i + 6)
                 {
-                    i += 7; // skip `define(`
+                    i = open + 1; // skip `define(`
                     while i < len && content[i].is_ascii_whitespace() {
                         i += 1;
                     }
@@ -489,8 +495,29 @@ fn has_any_keyword(content: &[u8]) -> bool {
         || memmem::find(content, b"trait").is_some()
         || memmem::find(content, b"enum").is_some()
         || memmem::find(content, b"function").is_some()
-        || memmem::find(content, b"define").is_some()
         || memmem::find(content, b"const").is_some()
+        || contains_ignore_ascii_case(content, b"define")
+}
+
+/// Whether `content` contains `needle` in any ASCII case.  `define()` is
+/// case-insensitive in PHP, unlike the keywords above, which the scanner
+/// only recognises in lower case.  It runs last, so only a file with none
+/// of the other keywords pays for it.
+fn contains_ignore_ascii_case(content: &[u8], needle: &[u8]) -> bool {
+    content
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle))
+}
+
+/// The offset of the `(` at `from`, after any whitespace, or `None` when
+/// something else comes first.
+#[inline]
+fn paren_after_whitespace(content: &[u8], from: usize) -> Option<usize> {
+    let mut i = from;
+    while i < content.len() && content[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    (content.get(i) == Some(&b'(')).then_some(i)
 }
 
 /// Check if a character is a valid boundary (not part of an identifier).

@@ -85,11 +85,12 @@ pub(super) fn extract_property(
         );
         if let Some(parsed_doc) = info.as_ref().and_then(docblock::extract_var_type_from_info) {
             for prop in &mut prop_infos {
-                let effective = docblock::resolve_effective_type_typed(
+                let facts = docblock::resolve_effective_type_typed(
                     prop.type_hint.as_ref(),
                     Some(&parsed_doc),
                 );
-                prop.type_hint = effective;
+                prop.type_hint = facts.effective;
+                prop.doc_type = facts.doc;
             }
         }
         let description = info
@@ -164,6 +165,7 @@ fn extract_property_info(property: &Property, content: Option<&str>) -> Vec<Prop
             name_offset: var.span.start.offset,
             type_hint: native_hint.clone(),
             native_type_hint: native_hint.clone(),
+            doc_type: None,
             description: None,
             is_static,
             is_readonly,

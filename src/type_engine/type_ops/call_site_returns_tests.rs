@@ -10,6 +10,7 @@ fn params(names: &[&str]) -> Vec<ParameterInfo> {
             is_required: i == 0,
             type_hint: None,
             native_type_hint: None,
+            doc_type: None,
             description: None,
             default_value: None,
             is_variadic: false,

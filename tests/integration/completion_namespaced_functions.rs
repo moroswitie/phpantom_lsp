@@ -764,6 +764,7 @@ async fn test_use_function_namespaced_detail_shows_signature() {
                         is_required: true,
                         type_hint: Some(PhpType::parse("mixed")),
                         native_type_hint: Some(PhpType::parse("mixed")),
+                        doc_type: None,
                         description: None,
                         default_value: None,
                         is_variadic: false,

@@ -226,6 +226,10 @@ impl PhpType {
     /// union does not get to override: an interface declaring
     /// `@return array<string, mixed>|list<mixed>|string` and an
     /// implementation declaring `: array` can only ever return an array.
+    /// Both types may be unions: each inherited alternative is checked
+    /// against the native alternatives, retaining refinements while capping
+    /// broader members (`bool|list<string>` under `false|array` becomes
+    /// `false|list<string>`). Nullable types participate as unions with null.
     ///
     /// Only alternatives whose value domain is unmistakable take part. Class
     /// names, templates, `object`, `callable`, and `iterable` all straddle
@@ -241,26 +245,55 @@ impl PhpType {
         &self,
         native: &PhpType,
     ) -> Option<PhpType> {
-        let Some(allowed) = native_value_domains(native) else {
+        if self.is_subtype_of(native) {
             return Some(self.clone());
-        };
-        let members = self.union_members();
-        let kept: Vec<PhpType> = members
-            .iter()
-            .filter(|member| match value_domain(member) {
-                Some(domain) => allowed.contains(&domain),
-                None => true,
-            })
-            .map(|member| (*member).clone())
-            .collect();
-
-        if kept.is_empty() {
-            None
-        } else if kept.len() == members.len() {
-            Some(self.clone())
-        } else {
-            Some(PhpType::union(kept))
         }
+        // Intersect alternatives separately: bool|list<string> under
+        // false|array is false|list<string>, preserving the element type.
+        match self.kind() {
+            TypeKind::Union(members) => {
+                return union_if_any(
+                    members
+                        .iter()
+                        .map(|member| member.without_alternatives_the_native_type_forbids(native)),
+                );
+            }
+            TypeKind::Nullable(inner) => {
+                return union_if_any([
+                    inner.without_alternatives_the_native_type_forbids(native),
+                    PhpType::null().without_alternatives_the_native_type_forbids(native),
+                ]);
+            }
+            _ => {}
+        }
+        match native.kind() {
+            TypeKind::Union(members) => {
+                return union_if_any(
+                    members
+                        .iter()
+                        .map(|member| self.without_alternatives_the_native_type_forbids(member)),
+                );
+            }
+            TypeKind::Nullable(inner) => {
+                return union_if_any([
+                    self.without_alternatives_the_native_type_forbids(inner),
+                    self.without_alternatives_the_native_type_forbids(&PhpType::null()),
+                ]);
+            }
+            _ => {}
+        }
+        if native.is_subtype_of(self) {
+            return Some(native.clone());
+        }
+        if (self.is_true() && native.is_false()) || (self.is_false() && native.is_true()) {
+            return None;
+        }
+        if let (Some(domain), Some(allowed)) = (value_domain(self), native_value_domains(native))
+            && !allowed.contains(&domain)
+        {
+            return None;
+        }
+        Some(self.clone())
     }
 
     // -----------------------------------------------------------------------
@@ -338,6 +371,11 @@ impl PhpType {
 // ---------------------------------------------------------------------------
 // Simplification helpers (private)
 // ---------------------------------------------------------------------------
+
+fn union_if_any(members: impl IntoIterator<Item = Option<PhpType>>) -> Option<PhpType> {
+    let kept: Vec<PhpType> = members.into_iter().flatten().collect();
+    (!kept.is_empty()).then(|| PhpType::union(kept))
+}
 
 /// A runtime value domain that no other domain overlaps.
 ///

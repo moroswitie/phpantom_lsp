@@ -595,19 +595,10 @@ namespace Two {
 
 #[test]
 fn tags_outside_the_class_docblock_stay_suppressed_with_the_switch_on() {
-    // A tag inside a class's span, whether in a docblock between the
-    // attributes and the keyword or in a method body above an
-    // anonymous class, declares no member of the enclosing class,
-    // even where that class has a real member of the same name.
+    // A tag in a method body above an anonymous class declares no member
+    // of the enclosing class, even where that class has a real member of
+    // the same name.
     let content = r#"<?php
-#[Attribute]
-/**
- * @method string attributed()
- * @property int $attributedTitle
- */
-class Tagged {
-    public function attributed(): string { return ''; }
-}
 class Outer {
     public const LABEL = 'outer';
     public function magic(): int { return 1; }
@@ -621,12 +612,7 @@ class Outer {
 }
 "#;
     let backend = on_backend();
-    for (search, token) in [
-        ("string attributed()", "attributed"),
-        ("int $attributedTitle", "attributedTitle"),
-        ("string magic()", "magic"),
-        ("int $LABEL", "LABEL"),
-    ] {
+    for (search, token) in [("string magic()", "magic"), ("int $LABEL", "LABEL")] {
         let hover = hover_text_at(
             &backend,
             content,
@@ -637,6 +623,38 @@ class Outer {
             "the tag {token} should answer nothing, got: {hover:?}"
         );
     }
+}
+
+/// A docblock between the attributes and the `class` keyword is the
+/// class's docblock (PHP's rule, spec ATTR-002), so its tags declare the
+/// class's members like any other class docblock's: a tag named like a
+/// real member shows the real member.
+#[test]
+fn a_docblock_after_the_class_attributes_declares_its_members() {
+    let content = r#"<?php
+#[Attribute]
+/**
+ * @method string attributed()
+ * @property int $attributedTitle
+ */
+class Tagged {
+    public function attributed(): string { return ''; }
+}
+"#;
+    assert_off_on(
+        content,
+        "string attributed()",
+        "attributed",
+        &["public function attributed(): string;"],
+        &["virtual"],
+    );
+    assert_off_on(
+        content,
+        "int $attributedTitle",
+        "attributedTitle",
+        &["**var** `int`", "class Tagged", "$attributedTitle"],
+        &[],
+    );
 }
 
 // ─── Declaration identity ───────────────────────────────────────────

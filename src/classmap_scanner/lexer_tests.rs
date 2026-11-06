@@ -312,6 +312,34 @@ fn symbols_define_double_quote() {
     assert_eq!(result.constants, vec!["APP_VERSION"]);
 }
 
+/// The prefilter accepts every `define()` the parser's recogniser does
+/// (`parser/define_call.rs`): a fully qualified or upper-case callee,
+/// whitespace before the `(`, and a call inside a `defined() or` guard.
+#[test]
+fn symbols_define_spellings_the_parser_accepts() {
+    for content in [
+        &br"<?php \define('X', 1);"[..],
+        b"<?php\nDEFINE ('X', 1);",
+        b"<?php\ndefined('X') or define('X', 1);",
+        b"<?php\nDefine\n(\n'X', 1);",
+    ] {
+        let result = find_symbols(content);
+        assert_eq!(
+            result.constants,
+            vec!["X"],
+            "{}",
+            String::from_utf8_lossy(content)
+        );
+    }
+}
+
+/// A file whose only keyword is an upper-case `DEFINE` is still scanned.
+#[test]
+fn symbols_upper_case_define_alone_passes_the_keyword_check() {
+    let result = find_symbols(b"<?php\nDEFINE('ONLY', 1);");
+    assert_eq!(result.constants, vec!["ONLY"]);
+}
+
 #[test]
 fn symbols_top_level_const() {
     let content = b"<?php\nconst FOO = 'bar';";

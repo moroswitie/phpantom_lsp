@@ -2993,3 +2993,9 @@ abstract class ScaffoldingHoverContract
 // The global `globalTagDemo()` in completion.php imports. It is assigned in
 // this file, not that one, so only the function's `@global` tag types it.
 $globalPencil = new Pencil();
+
+interface ScaffoldingUnionReturnContract
+{
+    /** @return bool|list<string> */
+    public function values(bool $available): bool|array;
+}

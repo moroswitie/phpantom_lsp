@@ -100,6 +100,13 @@ class HoverPromotedDescriptionsDemo
 
         // Hover on `both` → "Own description for both." (its own docblock wins over @param)
         echo $this->both;
+
+        // Try: hover on `HoverPromotedDescriptionsDemo` below, or open signature
+        // help inside its parentheses → each argument's text is the
+        // constructor's @param ("Param description.", "Param description for
+        // both."), else the parameter's own docblock ("Own summary.", "Own var
+        // description.").
+        new HoverPromotedDescriptionsDemo(1, 2, 3, 4);
     }
 }
 

@@ -2399,6 +2399,7 @@ fn stub_function_info(name: &str, return_type: Option<PhpType>) -> crate::types:
         parameters: Vec::new().into(),
         return_type,
         native_return_type: None,
+        doc_return_type: None,
         description: None,
         return_description: None,
         links: Vec::new(),

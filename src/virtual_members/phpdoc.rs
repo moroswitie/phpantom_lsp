@@ -47,6 +47,7 @@ fn doc_property(property: &DocblockProperty, subs: &HashMap<String, PhpType>) ->
     });
     PropertyInfo {
         description: property.description.clone(),
+        doc_type: property.type_hint.clone(),
         ..PropertyInfo::virtual_property_owned(property.name, type_hint)
     }
 }

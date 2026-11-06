@@ -95,6 +95,7 @@ pub fn make_param(name: &str, type_hint: Option<&str>, is_required: bool) -> Par
         is_required,
         type_hint: type_hint.map(PhpType::parse),
         native_type_hint: type_hint.map(PhpType::parse),
+        doc_type: None,
         description: None,
         default_value: None,
         is_variadic: false,

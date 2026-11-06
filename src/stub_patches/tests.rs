@@ -57,6 +57,7 @@ fn param(name: &str, type_hint: &str) -> crate::types::ParameterInfo {
         is_required: true,
         type_hint: Some(PhpType::parse(type_hint)),
         native_type_hint: Some(PhpType::parse(type_hint)),
+        doc_type: None,
         description: None,
         default_value: None,
         is_variadic: false,
@@ -485,4 +486,88 @@ fn an_unrelated_function_keeps_its_parameter_types() {
     apply_function_stub_patches(&mut func);
 
     assert_eq!(func.parameters[0].type_hint, Some(PhpType::string()));
+}
+
+/// A patched return type stands in for the `@return` the stub should have
+/// carried, so it is recorded as the method's doc type: an override that
+/// writes no docblock then inherits it, as it would a written tag.
+#[test]
+fn a_patched_return_type_is_the_methods_doc_type() {
+    let mut class = empty_class("IteratorIterator");
+    let mixed = PhpType::parse("mixed");
+    let current = crate::types::MethodInfo {
+        name: atom("current"),
+        return_type: Some(mixed.clone()),
+        native_return_type: Some(mixed),
+        ..Default::default()
+    };
+    class.methods.push(std::sync::Arc::new(current));
+
+    apply_class_stub_patches(&mut class);
+
+    let current = class
+        .methods
+        .iter()
+        .find(|m| m.name == "current")
+        .expect("current()");
+    let t_value = PhpType::named(atom("TValue"));
+    assert_eq!(current.return_type.as_ref(), Some(&t_value));
+    assert_eq!(current.doc_return_type.as_ref(), Some(&t_value));
+}
+
+/// A stub tag that only restates its native type (phpstorm-stubs'
+/// `@return int the number of elements` on `count(): int`) counts as
+/// unwritten, so the method inherits from its ancestor; a tag that refines
+/// the native type, and the description, stay.
+#[test]
+fn a_stub_tag_restating_its_native_type_is_not_a_doc_type() {
+    let mut class = empty_class("SplDoublyLinkedList");
+    let int = PhpType::parse("int");
+    let mut count = crate::types::MethodInfo {
+        name: atom("count"),
+        description: Some("Method summary.".into()),
+        return_type: Some(int.clone()),
+        native_return_type: Some(int.clone()),
+        doc_return_type: Some(int.clone()),
+        parameters: vec![crate::types::ParameterInfo {
+            doc_type: Some(int.clone()),
+            description: Some("Parameter description.".into()),
+            ..param("$index", "int")
+        }]
+        .into(),
+        ..Default::default()
+    };
+    count.extras_mut().return_description = Some("Return description.".into());
+    let positive = PhpType::parse("int<0, max>");
+    let offset = crate::types::MethodInfo {
+        name: atom("offsetGet"),
+        return_type: Some(positive.clone()),
+        native_return_type: Some(int),
+        doc_return_type: Some(positive.clone()),
+        ..Default::default()
+    };
+    class.methods.push(std::sync::Arc::new(count));
+    class.methods.push(std::sync::Arc::new(offset));
+
+    apply_class_stub_patches(&mut class);
+
+    let method = |name: &str| {
+        class
+            .methods
+            .iter()
+            .find(|m| m.name == name)
+            .expect("method")
+            .clone()
+    };
+    let count = method("count");
+    assert_eq!(count.doc_return_type, None);
+    assert_eq!(count.return_type, Some(PhpType::parse("int")));
+    assert_eq!(count.parameters[0].doc_type, None);
+    assert_eq!(count.description.as_deref(), Some("Method summary."));
+    assert_eq!(count.return_description(), Some("Return description."));
+    assert_eq!(
+        count.parameters[0].description.as_deref(),
+        Some("Parameter description.")
+    );
+    assert_eq!(method("offsetGet").doc_return_type, Some(positive));
 }

@@ -12,7 +12,7 @@ use crate::parser::{
 };
 use crate::php_type::PhpType;
 use crate::types::*;
-use crate::virtual_members::laravel::{has_scope_attribute, relationship_return_type};
+use crate::virtual_members::laravel::{has_scope_attribute, relationship_type_from_body};
 
 use super::resolve_written_class;
 
@@ -40,7 +40,7 @@ pub(super) fn extract_method<'a>(
         },
         class_template_param_bounds,
     )?;
-    if is_constructor {
+    let promoted_descriptions = if is_constructor {
         push_promoted_properties(
             method,
             doc_ctx,
@@ -48,12 +48,15 @@ pub(super) fn extract_method<'a>(
             class_template_param_bounds,
             &mut signature,
             properties,
-        );
-    }
+        )
+    } else {
+        Vec::new()
+    };
     let Signature {
         mut parameters,
         native_return_type,
         return_type,
+        doc_return_type,
         conditional_return,
         docblock: method_docblock_info,
         template_params: method_template_params,
@@ -72,8 +75,15 @@ pub(super) fn extract_method<'a>(
 
     // An Eloquent relationship's related model comes from the body
     // (`$this->hasMany(Post::class)`) when the declared type does not name
-    // it.
-    let return_type = relationship_return_type(return_type, method, doc_ctx);
+    // it.  Like a refining `#[ArrayShape]`, that type is PHPDoc-level
+    // information the declaration supplies, so it is the doc return type
+    // as well: an undocumented override (`return parent::posts();`)
+    // inherits it the way it inherits a written `@return`.
+    let (return_type, doc_return_type) =
+        match relationship_type_from_body(return_type.as_ref(), method, doc_ctx) {
+            Some(from_body) => (Some(from_body.clone()), Some(from_body)),
+            None => (return_type, doc_return_type),
+        };
 
     // Merge `@param` docblock types into parameter type hints so that
     // callable signatures like `callable(User): void` are preserved.  This
@@ -115,6 +125,11 @@ pub(super) fn extract_method<'a>(
             param.description = docblock::extract_param_description_from_info(info, &param.name);
         }
     }
+    for (name, text) in promoted_descriptions {
+        if let Some(param) = parameters.iter_mut().find(|p| p.name == name) {
+            param.description = Some(text);
+        }
+    }
 
     let reads_func_args = match &method.body {
         MethodBody::Concrete(block) => {
@@ -130,6 +145,7 @@ pub(super) fn extract_method<'a>(
         parameters: parameters.into(),
         native_return_type,
         return_type,
+        doc_return_type,
         description: info.and_then(crate::hover::extract_description_from_info),
         is_static: method.modifiers.iter().any(|m| m.is_static()),
         visibility: extract_visibility(method.modifiers.iter()),
@@ -198,8 +214,12 @@ pub(super) fn extract_method<'a>(
 /// types the parameter in `signature`, and binds the class templates it
 /// names.
 ///
-/// The description comes from the parameter's own docblock first, then the
-/// constructor's `@param` text; the two are never merged.
+/// The property's description comes from the parameter's own docblock
+/// first, then the constructor's `@param` text; the two are never merged.
+/// The argument's description is the other way round: the `@param` text
+/// first, then the parameter's own. Returns the own texts the arguments
+/// need, by parameter name, for the caller to apply once the `@param`
+/// texts are in.
 fn push_promoted_properties<'a>(
     method: &'a Method<'a>,
     doc_ctx: Option<&DocblockCtx<'a>>,
@@ -207,7 +227,8 @@ fn push_promoted_properties<'a>(
     class_template_param_bounds: &AtomMap<PhpType>,
     signature: &mut Signature,
     properties: &mut Vec<PropertyInfo>,
-) {
+) -> Vec<(Atom, String)> {
+    let mut argument_descriptions = Vec::new();
     for param in method.parameter_list.parameters.iter() {
         if !param.is_promoted_property() {
             continue;
@@ -229,18 +250,22 @@ fn push_promoted_properties<'a>(
         let inline_var_type = inline_docblock_info
             .as_ref()
             .and_then(docblock::extract_var_type_from_info);
-        let description = inline_docblock_info
+        let own_description = inline_docblock_info
             .as_ref()
-            .and_then(crate::hover::extract_property_description_from_info)
-            .or_else(|| {
-                signature
-                    .docblock
-                    .as_ref()
-                    .and_then(|info| docblock::extract_param_description_from_info(info, &raw_name))
-            });
+            .and_then(crate::hover::extract_property_description_from_info);
+        let param_description = signature
+            .docblock
+            .as_ref()
+            .and_then(|info| docblock::extract_param_description_from_info(info, &raw_name));
+        if param_description.is_none()
+            && let Some(text) = &own_description
+        {
+            argument_descriptions.push((atom(&raw_name), text.clone()));
+        }
+        let description = own_description.or(param_description);
 
-        let type_hint = if let Some(ref var_type) = inline_var_type {
-            let effective =
+        let facts = if let Some(ref var_type) = inline_var_type {
+            let facts =
                 docblock::resolve_effective_type_typed(saved_native_hint.as_ref(), Some(var_type));
             // Without a `@param` of its own, the `@var` is the parameter's
             // documented type too, so it binds class templates from the
@@ -251,7 +276,7 @@ fn push_promoted_properties<'a>(
             if !has_param_tag {
                 bind_promoted_var_type(
                     var_type,
-                    effective.as_ref(),
+                    facts.effective.as_ref(),
                     &raw_name,
                     class_template_params,
                     &mut signature.parameters,
@@ -259,7 +284,7 @@ fn push_promoted_properties<'a>(
                     &mut signature.template_bindings,
                 );
             }
-            effective
+            facts
         } else if let Some(ref info) = signature.docblock {
             let parsed = docblock::extract_param_raw_type_from_info(info, &raw_name);
             docblock::resolve_effective_type_with_template_bounds(
@@ -268,14 +293,18 @@ fn push_promoted_properties<'a>(
                 class_template_param_bounds,
             )
         } else {
-            saved_native_hint.clone()
+            docblock::TypeFacts {
+                effective: saved_native_hint.clone(),
+                doc: None,
+            }
         };
+        let doc_type = facts.doc;
 
         // When no type hint is available, infer from `new ClassName()`
         // default values (PHP 8.1+: `private $repo = new Repo()`).  Resolve
         // to FQN eagerly so downstream code does not need short-name
         // resolution logic.
-        let type_hint = type_hint.or_else(|| {
+        let type_hint = facts.effective.or_else(|| {
             let dv = param.default_value.as_ref()?;
             if let Expression::Instantiation(inst) = dv.value
                 && let Expression::Identifier(ident) = inst.class
@@ -291,6 +320,7 @@ fn push_promoted_properties<'a>(
             name_offset: param.variable.span.start.offset,
             native_type_hint: saved_native_hint,
             type_hint,
+            doc_type,
             description,
             is_static: false,
             is_readonly: prop_readonly,
@@ -303,6 +333,7 @@ fn push_promoted_properties<'a>(
             source: None,
         });
     }
+    argument_descriptions
 }
 
 /// Carry a promoted constructor parameter's inline `@var` over to the
@@ -324,6 +355,7 @@ fn bind_promoted_var_type(
 ) {
     if let Some(param) = parameters.iter_mut().find(|p| p.name == param_name) {
         param.type_hint = effective.cloned();
+        param.doc_type = Some(var_type.clone());
     }
     if class_template_params.is_empty()
         || !(method_template_params.is_empty()

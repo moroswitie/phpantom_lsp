@@ -70,7 +70,7 @@ struct ClassDocblockInfo {
 /// Returns [`ClassDocblockInfo::default()`] when no docblock context is
 /// available or when the node has no preceding doc comment.
 fn extract_class_docblock<'a>(
-    node: &impl HasSpan,
+    node: &impl crate::symbol_map::docblock::Documented,
     doc_ctx: Option<&DocblockCtx<'a>>,
 ) -> ClassDocblockInfo {
     let Some(ctx) = doc_ctx else {

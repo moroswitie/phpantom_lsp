@@ -4707,10 +4707,13 @@ array_map(null, []);
         text
     );
 
-    // $arrays has a @param tag but no description and types match — should NOT show.
+    // $arrays has a @param tag without description whose type matches the
+    // native one.  The written tag still shows, with its type: an explicit
+    // tag is what overrides an inherited one (issue 23, D-06), so it is not
+    // dropped as if nothing were written.
     assert!(
-        !text.contains("**$arrays**"),
-        "should NOT show $arrays param entry (no description, types match): {}",
+        text.contains("**$arrays** `array` ..."),
+        "should show the written $arrays tag with its type: {}",
         text
     );
 

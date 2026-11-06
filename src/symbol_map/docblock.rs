@@ -86,50 +86,194 @@ pub(super) fn class_ref_span_ctx(
     }
 }
 
-// ─── Docblock text retrieval ────────────────────────────────────────────────
+// ─── Docblock association ───────────────────────────────────────────────────
 
-/// Like [`crate::docblock::get_docblock_text_for_node`] but also returns
-/// the byte offset of the `/**` opening within the file.
+/// A node a docblock can document, with the attribute lists written before
+/// its first token.
+///
+/// The attribute lists are part of a Mago node's span, so a docblock written
+/// between an attribute and the declaration (`#[A] /** d */ public …`) lies
+/// *inside* the span.  [`get_docblock_text_with_offset`] needs the lists to
+/// look past them, the way PHP does.
+pub trait Documented: HasSpan {
+    /// The attribute lists before the node's first token, in source order;
+    /// empty for a node that takes none.
+    fn attribute_lists(&self) -> &[AttributeList<'_>];
+}
+
+/// Implement [`Documented`] for nodes with an `attribute_lists` field.
+macro_rules! documented_by_field {
+    ($($node:ident),* $(,)?) => {$(
+        impl Documented for $node<'_> {
+            fn attribute_lists(&self) -> &[AttributeList<'_>] {
+                self.attribute_lists.as_slice()
+            }
+        }
+    )*};
+}
+
+documented_by_field!(
+    Class,
+    Interface,
+    Trait,
+    Enum,
+    AnonymousClass,
+    EnumCase,
+    ClassLikeConstant,
+    Constant,
+    Method,
+    PlainProperty,
+    HookedProperty,
+    PropertyHook,
+    FunctionLikeParameter,
+    Function,
+    Closure,
+    ArrowFunction,
+);
+
+/// Implement [`Documented`] for nodes that take no attributes.
+macro_rules! documented_without_attributes {
+    ($($node:ident),* $(,)?) => {$(
+        impl Documented for $node<'_> {
+            fn attribute_lists(&self) -> &[AttributeList<'_>] {
+                &[]
+            }
+        }
+    )*};
+}
+
+documented_without_attributes!(
+    TraitUse,
+    Statement,
+    ExpressionStatement,
+    Return,
+    Echo,
+    Expression,
+);
+
+impl Documented for Property<'_> {
+    fn attribute_lists(&self) -> &[AttributeList<'_>] {
+        match self {
+            Property::Plain(plain) => plain.attribute_lists(),
+            Property::Hooked(hooked) => hooked.attribute_lists(),
+        }
+    }
+}
+
+impl Documented for ClassLikeMember<'_> {
+    fn attribute_lists(&self) -> &[AttributeList<'_>] {
+        match self {
+            ClassLikeMember::TraitUse(trait_use) => trait_use.attribute_lists(),
+            ClassLikeMember::Constant(constant) => constant.attribute_lists(),
+            ClassLikeMember::Property(property) => property.attribute_lists(),
+            ClassLikeMember::EnumCase(case) => case.attribute_lists(),
+            ClassLikeMember::Method(method) => method.attribute_lists(),
+        }
+    }
+}
+
+impl<T: Documented> Documented for &T {
+    fn attribute_lists(&self) -> &[AttributeList<'_>] {
+        (**self).attribute_lists()
+    }
+}
+
+/// The docblock that documents `node`, and the byte offset of its `/**`.
+///
+/// This is the one place that decides which docblock belongs to a
+/// declaration, and it follows PHP's rule (`ReflectionClass::getDocComment`
+/// and friends): the nearest doc comment before the declaration's first
+/// token after its attributes.  Attribute lists, whitespace and other
+/// comments in between are skipped, so `#[A] /** d */ public …`,
+/// `/** d */ #[A] public …` and `#[A] /** d */ #[B] public …` all find `d`;
+/// of two doc comments, the later one wins.  Any other code in between
+/// (a statement, a `;`) means the node has no docblock.
 pub fn get_docblock_text_with_offset<'a>(
     trivia: &'a [Trivia<'a>],
     content: &str,
-    node: &impl HasSpan,
+    node: &impl Documented,
 ) -> Option<(&'a str, u32)> {
     use crate::atom::bytes_to_str;
-    let node_start = node.span().start.offset;
-    let candidate_idx = trivia.partition_point(|t| t.span.start.offset < node_start);
-    if candidate_idx == 0 {
-        return None;
-    }
+
+    let attributes = node.attribute_lists();
+    let anchor = match attributes.last() {
+        Some(last) => first_token_after(trivia, content, last.span().end.offset),
+        None => node.span().start.offset,
+    };
 
     let content_bytes = content.as_bytes();
-    let mut covered_from = node_start;
+    let only_whitespace = |from: u32, to: u32| {
+        content_bytes
+            .get(from as usize..to as usize)
+            .unwrap_or(&[])
+            .iter()
+            .all(u8::is_ascii_whitespace)
+    };
 
-    for i in (0..candidate_idx).rev() {
-        let t = &trivia[i];
-        let t_end = t.span.end.offset;
+    // Walk backwards from the anchor over trivia and attribute lists,
+    // whichever ends later first.  `covered_from` is where the stretch
+    // already known to hold only skippable things begins.
+    let mut covered_from = anchor;
+    let mut next_trivia = trivia.partition_point(|t| t.span.start.offset < anchor);
+    let mut next_attribute = attributes.len();
+    loop {
+        let attribute = next_attribute.checked_sub(1).map(|i| attributes[i].span());
+        let comment = next_trivia.checked_sub(1).map(|i| &trivia[i]);
+        // A comment inside an attribute list starts before the list ends,
+        // so the list is taken first and the comment skipped with it.
+        let take_attribute = match (attribute, comment) {
+            (Some(attribute), Some(comment)) => attribute.end.offset > comment.span.start.offset,
+            (Some(_), None) => true,
+            (None, Some(_)) => false,
+            (None, None) => return None,
+        };
 
-        let gap = content_bytes
-            .get(t_end as usize..covered_from as usize)
-            .unwrap_or(&[]);
-        if !gap.iter().all(u8::is_ascii_whitespace) {
-            return None;
+        if take_attribute {
+            let attribute = attribute?;
+            if !only_whitespace(attribute.end.offset, covered_from) {
+                return None;
+            }
+            covered_from = attribute.start.offset;
+            next_attribute -= 1;
+            next_trivia = trivia.partition_point(|t| t.span.start.offset < covered_from);
+            continue;
         }
 
-        match t.kind {
+        let comment = comment?;
+        if !only_whitespace(comment.span.end.offset, covered_from) {
+            return None;
+        }
+        match comment.kind {
             TriviaKind::DocBlockComment => {
-                return Some((bytes_to_str(t.value), t.span.start.offset));
+                return Some((bytes_to_str(comment.value), comment.span.start.offset));
             }
             TriviaKind::WhiteSpace
             | TriviaKind::SingleLineComment
             | TriviaKind::MultiLineComment
             | TriviaKind::HashComment => {
-                covered_from = t.span.start.offset;
+                covered_from = comment.span.start.offset;
+                next_trivia -= 1;
             }
         }
     }
+}
 
-    None
+/// The offset of the first token at or after `from`: `from` moved past
+/// the whitespace and comments that follow it.
+fn first_token_after(trivia: &[Trivia<'_>], content: &str, from: u32) -> u32 {
+    let content_bytes = content.as_bytes();
+    let mut position = from;
+    let first = trivia.partition_point(|t| t.span.start.offset < from);
+    for t in &trivia[first..] {
+        let gap = content_bytes
+            .get(position as usize..t.span.start.offset as usize)
+            .unwrap_or(&[]);
+        if !gap.iter().all(u8::is_ascii_whitespace) {
+            break;
+        }
+        position = t.span.end.offset;
+    }
+    position
 }
 
 // ─── Docblock tag scanning ──────────────────────────────────────────────────
@@ -1408,5 +1552,122 @@ fn emit_see_reference(reference: &str, file_offset: u32, spans: &mut Vec<SymbolS
                 },
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The docblock text the lookup finds for the first property of the
+    /// first class in `code`.
+    fn property_docblock(code: &str) -> Option<String> {
+        nth_property_docblock(code, 0)
+    }
+
+    /// The docblock text the lookup finds for property number `n` of the
+    /// first class in `code`.  Panics when there is no such property, so
+    /// `None` always means "no docblock".
+    fn nth_property_docblock(code: &str, n: usize) -> Option<String> {
+        crate::parser::with_parsed_program(code, "docblock_test", |program, content| {
+            let class = program
+                .statements
+                .iter()
+                .find_map(|statement| match statement {
+                    Statement::Class(class) => Some(class),
+                    _ => None,
+                })
+                .expect("a class");
+            let property = class
+                .members
+                .iter()
+                .filter_map(|member| match member {
+                    ClassLikeMember::Property(property) => Some(property),
+                    _ => None,
+                })
+                .nth(n)
+                .expect("the property");
+            let (text, offset) =
+                get_docblock_text_with_offset(program.trivia.as_slice(), content, property)?;
+            assert_eq!(
+                &content[offset as usize..offset as usize + text.len()],
+                text
+            );
+            Some(text.to_string())
+        })
+    }
+
+    #[test]
+    fn docblock_before_the_attribute() {
+        let found = property_docblock("<?php class C {\n /** d */\n #[A]\n public int $x;\n}");
+        assert_eq!(found.as_deref(), Some("/** d */"));
+    }
+
+    #[test]
+    fn docblock_after_the_attribute() {
+        let found = property_docblock("<?php class C {\n #[A]\n /** d */\n public int $x;\n}");
+        assert_eq!(found.as_deref(), Some("/** d */"));
+    }
+
+    #[test]
+    fn docblock_between_two_attribute_groups() {
+        let found =
+            property_docblock("<?php class C {\n #[A]\n /** d */\n #[B(1)]\n public int $x;\n}");
+        assert_eq!(found.as_deref(), Some("/** d */"));
+    }
+
+    #[test]
+    fn of_two_docblocks_the_later_wins() {
+        let found = property_docblock(
+            "<?php class C {\n /** first */\n #[A]\n /** second */\n public int $x;\n}",
+        );
+        assert_eq!(found.as_deref(), Some("/** second */"));
+    }
+
+    #[test]
+    fn a_plain_comment_between_attribute_and_docblock_is_skipped() {
+        let found = property_docblock(
+            "<?php class C {\n /** d */\n #[A]\n // note\n /* more */\n public int $x;\n}",
+        );
+        assert_eq!(found.as_deref(), Some("/** d */"));
+        let found =
+            property_docblock("<?php class C {\n #[A]\n /** d */\n // note\n public int $x;\n}");
+        assert_eq!(found.as_deref(), Some("/** d */"));
+    }
+
+    #[test]
+    fn a_comment_inside_an_attribute_is_not_a_docblock_after_it() {
+        let found = property_docblock(
+            "<?php class C {\n /** d */\n #[A(/** inner */ 1)]\n public int $x;\n}",
+        );
+        assert_eq!(found.as_deref(), Some("/** d */"));
+    }
+
+    #[test]
+    fn no_docblock_at_all() {
+        assert_eq!(
+            property_docblock("<?php class C {\n #[A]\n public int $x;\n}"),
+            None
+        );
+        assert_eq!(
+            property_docblock("<?php class C {\n public int $x;\n}"),
+            None
+        );
+    }
+
+    #[test]
+    fn code_between_docblock_and_declaration_detaches_it() {
+        let found =
+            property_docblock("<?php class C {\n /** d */\n public int $y;\n public int $x;\n}");
+        assert_eq!(
+            found.as_deref(),
+            Some("/** d */"),
+            "the first property owns it"
+        );
+        let found = nth_property_docblock(
+            "<?php class C {\n /** d */\n public int $y;\n #[A]\n public int $x;\n}",
+            1,
+        );
+        assert_eq!(found, None);
     }
 }

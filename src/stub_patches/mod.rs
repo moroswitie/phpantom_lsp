@@ -149,6 +149,12 @@
 //!
 //! ### Class patches
 //!
+//! Before any patch below, every stub `@return` or `@param` type that only
+//! restates its native type (`@return int the number of elements` on
+//! `count(): int`, `@return mixed` on `current(): mixed`) is dropped, so
+//! the method inherits its ancestor's richer type instead of being pinned
+//! to the native one.
+//!
 //! 1. **`IteratorIterator`** -- phpstorm-stubs lack `@template` and `@mixin`.
 //!    PHPStan adds `@template TKey`, `@template TValue`,
 //!    `@template TIterator of Traversable<TKey, TValue>`,

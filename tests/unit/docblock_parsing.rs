@@ -685,7 +685,9 @@ fn effective_type_broken_docblock_falls_back_to_native() {
     let native = PhpType::parse("Result");
     let sanitised = sanitise_and_parse_docblock_type("<broken");
     assert_eq!(
-        resolve_effective_type_typed(Some(&native), sanitised.as_ref()).map(|t| t.to_string()),
+        resolve_effective_type_typed(Some(&native), sanitised.as_ref())
+            .effective
+            .map(|t| t.to_string()),
         Some("Result".into()),
     );
 }
@@ -696,7 +698,9 @@ fn effective_type_broken_docblock_recovers_base() {
     // native hint, partial recovery should kick in.
     let sanitised = sanitise_and_parse_docblock_type("Collection<int");
     assert_eq!(
-        resolve_effective_type_typed(None, sanitised.as_ref()).map(|t| t.to_string()),
+        resolve_effective_type_typed(None, sanitised.as_ref())
+            .effective
+            .map(|t| t.to_string()),
         Some("Collection".into()),
     );
 }
@@ -709,6 +713,7 @@ fn effective_type_balanced_docblock_unchanged() {
             Some(&PhpType::parse("array")),
             Some(&PhpType::parse("Collection<int, User>"))
         )
+        .effective
         .map(|t| t.to_string()),
         Some("Collection<int, User>".into()),
     );
@@ -916,6 +921,7 @@ fn override_array_false_union_with_generic() {
             Some(&PhpType::parse("array|false")),
             Some(&PhpType::parse("array<int, User>|false"))
         )
+        .effective
         .map(|t| t.to_string()),
         Some("array<int, User>|false".to_string())
     );
@@ -1187,7 +1193,9 @@ fn no_override_nullable_int_with_array_generic() {
 #[test]
 fn effective_type_docblock_only() {
     assert_eq!(
-        resolve_effective_type_typed(None, Some(&PhpType::parse("Session"))).map(|t| t.to_string()),
+        resolve_effective_type_typed(None, Some(&PhpType::parse("Session")))
+            .effective
+            .map(|t| t.to_string()),
         Some("Session".into())
     );
 }
@@ -1195,7 +1203,9 @@ fn effective_type_docblock_only() {
 #[test]
 fn effective_type_native_only() {
     assert_eq!(
-        resolve_effective_type_typed(Some(&PhpType::parse("int")), None).map(|t| t.to_string()),
+        resolve_effective_type_typed(Some(&PhpType::parse("int")), None)
+            .effective
+            .map(|t| t.to_string()),
         Some("int".into())
     );
 }
@@ -1207,6 +1217,7 @@ fn effective_type_both_compatible() {
             Some(&PhpType::parse("object")),
             Some(&PhpType::parse("Session"))
         )
+        .effective
         .map(|t| t.to_string()),
         Some("Session".into())
     );
@@ -1219,15 +1230,37 @@ fn effective_type_both_incompatible() {
             Some(&PhpType::parse("int")),
             Some(&PhpType::parse("Session"))
         )
+        .effective
         .map(|t| t.to_string()),
         Some("int".into())
     );
 }
 
+/// The written doc type is kept whether or not it wins, so a tag equal to
+/// the native hint stays apart from no tag at all (issue 23).
+#[test]
+fn effective_type_keeps_the_written_doc_type() {
+    let int = PhpType::parse("int");
+    let equal = resolve_effective_type_typed(Some(&int), Some(&int));
+    assert_eq!(equal.effective.as_ref(), Some(&int));
+    assert_eq!(equal.doc.as_ref(), Some(&int));
+
+    let session = PhpType::parse("Session");
+    let rejected = resolve_effective_type_typed(Some(&int), Some(&session));
+    assert_eq!(rejected.effective.as_ref(), Some(&int));
+    assert_eq!(rejected.doc.as_ref(), Some(&session));
+
+    let absent = resolve_effective_type_typed(Some(&int), None);
+    assert_eq!(absent.effective.as_ref(), Some(&int));
+    assert_eq!(absent.doc, None);
+}
+
 #[test]
 fn effective_type_neither() {
     assert_eq!(
-        resolve_effective_type_typed(None, None).map(|t| t.to_string()),
+        resolve_effective_type_typed(None, None)
+            .effective
+            .map(|t| t.to_string()),
         None::<String>
     );
 }

@@ -272,6 +272,7 @@ fn method_eq(a: &MethodInfo, b: &MethodInfo) -> bool {
         parameters,
         return_type,
         native_return_type,
+        doc_return_type,
         description,
         is_static,
         visibility,
@@ -294,6 +295,7 @@ fn method_eq(a: &MethodInfo, b: &MethodInfo) -> bool {
         && *visibility == b.visibility
         && *is_virtual == b.is_virtual
         && *native_return_type == b.native_return_type
+        && *doc_return_type == b.doc_return_type
         && *has_scope_attribute == b.has_scope_attribute
         && *is_abstract == b.is_abstract
         && *is_final == b.is_final
@@ -314,6 +316,7 @@ fn property_eq(a: &PropertyInfo, b: &PropertyInfo) -> bool {
         name_offset,
         type_hint,
         native_type_hint,
+        doc_type,
         description,
         is_static,
         is_readonly,
@@ -329,6 +332,7 @@ fn property_eq(a: &PropertyInfo, b: &PropertyInfo) -> bool {
         && *name_offset == b.name_offset
         && *type_hint == b.type_hint
         && *native_type_hint == b.native_type_hint
+        && *doc_type == b.doc_type
         && *is_static == b.is_static
         && *is_readonly == b.is_readonly
         && *doc_readonly == b.doc_readonly
@@ -351,6 +355,7 @@ fn parameter_eq(a: &ParameterInfo, b: &ParameterInfo) -> bool {
         is_required,
         type_hint,
         native_type_hint,
+        doc_type,
         description,
         default_value,
         is_variadic,
@@ -363,6 +368,7 @@ fn parameter_eq(a: &ParameterInfo, b: &ParameterInfo) -> bool {
         && *is_required == b.is_required
         && *type_hint == b.type_hint
         && *native_type_hint == b.native_type_hint
+        && *doc_type == b.doc_type
         && *is_variadic == b.is_variadic
         && *is_reference == b.is_reference
         && *closure_this_type == b.closure_this_type

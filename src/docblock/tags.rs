@@ -16,11 +16,10 @@
 use std::borrow::Cow;
 
 use super::tag_kind::TagKind;
-use mago_span::HasSpan;
 use mago_syntax::cst::*;
 
 use crate::atom::atom;
-use crate::symbol_map::docblock::get_docblock_text_with_offset;
+use crate::symbol_map::docblock::{Documented, get_docblock_text_with_offset};
 use crate::types::{
     AssertionKind, CallableInvocation, DocReadonly, ParameterInfo, PhpVersion, TypeAssertion,
 };
@@ -716,14 +715,15 @@ pub(crate) fn merge_param_docblock_into_parameters(
     for param in parameters.iter_mut() {
         let param_doc_type = extract_param_raw_type_from_info(info, &param.name);
         if let Some(ref doc_type) = param_doc_type {
-            let effective = resolve_effective_type_with_template_bounds(
+            let facts = resolve_effective_type_with_template_bounds(
                 param.type_hint.as_ref(),
                 Some(doc_type),
                 template_bounds,
             );
-            if effective.is_some() {
-                param.type_hint = effective;
+            if facts.effective.is_some() {
+                param.type_hint = facts.effective;
             }
+            param.doc_type = facts.doc;
         }
         param.description = extract_param_description_from_info(info, &param.name);
     }
@@ -738,14 +738,15 @@ pub(crate) fn merge_param_docblock_into_parameters(
             continue;
         }
         if let Some((None, doc_type)) = positional_tags.get(idx) {
-            let effective = resolve_effective_type_with_template_bounds(
+            let facts = resolve_effective_type_with_template_bounds(
                 param.type_hint.as_ref(),
                 Some(doc_type),
                 template_bounds,
             );
-            if effective.is_some() {
-                param.type_hint = effective;
+            if facts.effective.is_some() {
+                param.type_hint = facts.effective;
             }
+            param.doc_type = facts.doc;
         }
     }
 
@@ -799,8 +800,9 @@ pub(crate) fn merge_param_docblock_into_parameters(
             parameters.push(ParameterInfo {
                 name: atom(&tag_name),
                 is_required: false,
-                type_hint: Some(tag_type),
+                type_hint: Some(tag_type.clone()),
                 native_type_hint: None,
+                doc_type: Some(tag_type),
                 description,
                 default_value: None,
                 is_variadic: false,
@@ -1103,17 +1105,18 @@ pub(crate) fn strip_html_tags(s: &str) -> String {
 
 // ─── Docblock Text Extraction ───────────────────────────────────────────────
 
-/// Look up the docblock comment (if any) for a class-like member and return
+/// Look up the docblock comment (if any) that documents `node` and return
 /// its raw text.
 ///
-/// This uses the program's trivia list to find the `/** ... */` comment that
-/// immediately precedes the given AST node.  The `content` parameter is the
-/// full source text and is used to verify there is no code between the
-/// docblock and the node.
+/// The association rule (attributes skipped, the nearest `/** ... */`
+/// wins) lives in
+/// [`get_docblock_text_with_offset`](crate::symbol_map::docblock::get_docblock_text_with_offset).
+/// The `content` parameter is the full source text and is used to verify
+/// there is no code between the docblock and the node.
 pub fn get_docblock_text_for_node<'a>(
     trivia: &'a [Trivia<'a>],
     content: &str,
-    node: &impl HasSpan,
+    node: &impl Documented,
 ) -> Option<&'a str> {
     get_docblock_text_with_offset(trivia, content, node).map(|(text, _)| text)
 }
@@ -1128,7 +1131,7 @@ pub fn get_docblock_text_for_node<'a>(
 pub fn get_docblock_info_for_node(
     trivia: &[Trivia<'_>],
     content: &str,
-    node: &impl HasSpan,
+    node: &impl Documented,
 ) -> Option<DocblockInfo> {
     let text = get_docblock_text_for_node(trivia, content, node)?;
     parse_docblock_for_tags(text)

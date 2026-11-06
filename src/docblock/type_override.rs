@@ -12,6 +12,35 @@ use crate::php_type::{PhpType, TypeKind};
 
 // ─── Type Override Logic ────────────────────────────────────────────────────
 
+/// Whether a PHPDoc type is provably wider than the native type it would
+/// stand in for, so the native type must win.
+///
+/// A native type is a promise the declaration keeps. PHP lets an override
+/// narrow return types and widen parameter types, but PHPDoc must still
+/// fit the declaration's own native type. A
+/// PHPDoc type, written on the declaration or inherited from an ancestor,
+/// may therefore refine the native type but never replace it with
+/// something wider: `@return bool` does not widen `EmptyIterator::valid():
+/// false`, and an interface's `@return mixed` does not widen an
+/// implementation's `: int`.  PHPStan decides the same way (a PHPDoc type
+/// that is not a subtype of the native type gives way to it).
+///
+/// Only a provable widening counts: the native type is a subtype of the
+/// PHPDoc type and not the other way round.  A pair the subtype check
+/// cannot relate (a template, an unrelated or unloaded class name) is no
+/// proof, so this answers `false` for it.
+///
+/// Inheritance (`inheritance::enrichment`) asks it for every type it
+/// copies from an ancestor.  A declaration's own docblock goes through
+/// [`should_override_type_typed`] instead, which already keeps the native
+/// type over a wider docblock one and also judges what this structural
+/// check cannot: a `callable(): T` on a native `callable`, or a template
+/// bounded by a union of classes, refine their native type although
+/// [`PhpType::is_subtype_of`] cannot say so.
+pub(crate) fn doc_type_widens_native(doc_type: &PhpType, native_type: &PhpType) -> bool {
+    native_type.is_subtype_of(doc_type) && !doc_type.is_subtype_of(native_type)
+}
+
 /// Decide whether a docblock type should override a native type hint.
 ///
 /// Returns `true` when the docblock type is likely to carry more
@@ -383,6 +412,23 @@ fn extract_base_name_lower(ty: &PhpType) -> String {
 
 // ─── Effective Type Resolution ──────────────────────────────────────────────
 
+/// What a declaration's types are: the one it holds, and the PHPDoc type
+/// written on it.
+///
+/// Returned by [`resolve_effective_type_typed`] and
+/// [`resolve_effective_type_with_template_bounds`] so that no caller can
+/// keep the effective type and silently drop the fact that a docblock type
+/// was written: `@param int $id` on a native `int $id` settles on `int`
+/// either way, and only `doc` tells the two apart.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TypeFacts {
+    /// The type the declaration holds: the docblock type where it refines
+    /// the native hint, the native hint otherwise.
+    pub effective: Option<PhpType>,
+    /// The docblock type as written, whether or not it won.
+    pub doc: Option<PhpType>,
+}
+
 /// [`resolve_effective_type_typed`] for a declaration that introduces its
 /// own `@template` parameters, `bounds` being their `of` bounds.
 ///
@@ -393,6 +439,18 @@ fn extract_base_name_lower(ty: &PhpType) -> String {
 /// template's bound the same way).  Anything the bound cannot vouch for is
 /// judged as before.
 pub fn resolve_effective_type_with_template_bounds(
+    native_type: Option<&PhpType>,
+    docblock_type: Option<&PhpType>,
+    bounds: &crate::atom::AtomMap<PhpType>,
+) -> TypeFacts {
+    TypeFacts {
+        effective: effective_type_with_template_bounds(native_type, docblock_type, bounds),
+        doc: docblock_type.cloned(),
+    }
+}
+
+/// The effective half of [`resolve_effective_type_with_template_bounds`].
+fn effective_type_with_template_bounds(
     native_type: Option<&PhpType>,
     docblock_type: Option<&PhpType>,
     bounds: &crate::atom::AtomMap<PhpType>,
@@ -434,7 +492,7 @@ pub fn resolve_effective_type_with_template_bounds(
             }
         }
     }
-    resolve_effective_type_typed(native_type, docblock_type)
+    effective_type(native_type, docblock_type)
 }
 
 /// Pick the best available type between a native type hint and a docblock
@@ -448,6 +506,17 @@ pub fn resolve_effective_type_with_template_bounds(
 /// raw docblock strings should use [`super::sanitise_and_parse_docblock_type`]
 /// first.
 pub fn resolve_effective_type_typed(
+    native_type: Option<&PhpType>,
+    docblock_type: Option<&PhpType>,
+) -> TypeFacts {
+    TypeFacts {
+        effective: effective_type(native_type, docblock_type),
+        doc: docblock_type.cloned(),
+    }
+}
+
+/// The effective half of [`resolve_effective_type_typed`].
+fn effective_type(
     native_type: Option<&PhpType>,
     docblock_type: Option<&PhpType>,
 ) -> Option<PhpType> {
@@ -557,5 +626,46 @@ fn is_plain_value_type(ty: &PhpType) -> bool {
         TypeKind::ArrayShape(entries) => entries.iter().all(|e| is_plain_value_type(&e.value_type)),
         TypeKind::Literal(_) | TypeKind::IntRange(..) => true,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn widens(doc: &str, native: &str) -> bool {
+        doc_type_widens_native(&PhpType::parse(doc), &PhpType::parse(native))
+    }
+
+    fn effective(native: &str, doc: &str) -> String {
+        resolve_effective_type_typed(Some(&PhpType::parse(native)), Some(&PhpType::parse(doc)))
+            .effective
+            .expect("a type")
+            .to_string()
+    }
+
+    #[test]
+    fn a_doc_type_wider_than_the_native_type_widens_it() {
+        assert!(widens("bool", "false"));
+        assert!(widens("mixed", "int"));
+        assert!(widens("int|string", "int"));
+        assert!(widens("iterable", "array"));
+    }
+
+    #[test]
+    fn a_refining_equal_or_unrelated_doc_type_does_not_widen() {
+        assert!(!widens("false", "bool"));
+        assert!(!widens("int<0, max>", "int"));
+        assert!(!widens("int", "int"));
+        assert!(!widens("list<string>", "array"));
+        assert!(!widens("TValue", "int"));
+        assert!(!widens("Foo", "Bar"));
+    }
+
+    #[test]
+    fn the_native_type_wins_over_a_wider_doc_type() {
+        assert_eq!(effective("false", "bool"), "false");
+        assert_eq!(effective("int", "mixed"), "int");
+        assert_eq!(effective("bool", "false"), "false");
     }
 }

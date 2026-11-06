@@ -397,24 +397,26 @@ impl EnclosingReturnTypes {
 /// declares.
 pub(crate) fn enclosing_return_types(content: &str, offset: u32) -> EnclosingReturnTypes {
     crate::parser::with_parsed_program(content, "extract_function", |program, content| {
-        let (hint, span) = match find_cursor_context(&program.statements, offset) {
+        let trivia = program.trivia.as_slice();
+        let (hint, docblock) = match find_cursor_context(&program.statements, offset) {
             CursorContext::InClassLike {
                 member: MemberContext::Method(method, true),
                 ..
-            } => (method.return_type_hint.as_ref(), method.span()),
-            CursorContext::InFunction(func, true) => (func.return_type_hint.as_ref(), func.span()),
+            } => (
+                method.return_type_hint.as_ref(),
+                crate::docblock::get_docblock_text_for_node(trivia, content, method),
+            ),
+            CursorContext::InFunction(func, true) => (
+                func.return_type_hint.as_ref(),
+                crate::docblock::get_docblock_text_for_node(trivia, content, func),
+            ),
             _ => return None,
         };
         Some(EnclosingReturnTypes {
             native: hint.map_or_else(PhpType::untyped, |h| {
                 crate::parser::extract_hint_type(&h.hint)
             }),
-            docblock: crate::docblock::get_docblock_text_for_node(
-                program.trivia.as_slice(),
-                content,
-                &span,
-            )
-            .and_then(crate::docblock::extract_return_type),
+            docblock: docblock.and_then(crate::docblock::extract_return_type),
         })
     })
     .unwrap_or_else(EnclosingReturnTypes::none)

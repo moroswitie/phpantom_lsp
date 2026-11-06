@@ -78,15 +78,16 @@ fn infer_relationship_from_method<'a>(
     infer_relationship_from_body(body_text)
 }
 
-/// A method's return type, filled in from its body when that says more.
+/// The relationship type a method's body supplies where its declared
+/// return type does not say it, `None` when the declared type stands.
 ///
 /// With no declared type, the body's `$this->hasMany(Post::class)` is the
 /// only source.  A bare relationship class as the declared type
 /// (`: HasMany`, the usual way to write a relationship without a
 /// docblock) names the relationship but not the related model, which the
 /// same body call supplies.
-pub(crate) fn relationship_return_type<'a>(
-    declared: Option<PhpType>,
+pub(crate) fn relationship_type_from_body<'a>(
+    declared: Option<&PhpType>,
     method: &class_like::method::Method<'a>,
     doc_ctx: Option<&DocblockCtx<'a>>,
 ) -> Option<PhpType> {
@@ -94,18 +95,15 @@ pub(crate) fn relationship_return_type<'a>(
         return infer_relationship_from_method(method, doc_ctx);
     };
     let TypeKind::Named(name) = declared.kind() else {
-        return Some(declared);
+        return None;
     };
     let declared_short = short_name(name);
     if !is_inferable_relationship_short_name(declared_short) {
-        return Some(declared);
+        return None;
     }
-    match infer_relationship_from_method(method, doc_ctx) {
-        Some(inferred) if matches!(inferred.kind(), TypeKind::Generic(g) if short_name(&g.name) == declared_short) => {
-            Some(inferred)
-        }
-        _ => Some(declared),
-    }
+    infer_relationship_from_method(method, doc_ctx).filter(|inferred| {
+        matches!(inferred.kind(), TypeKind::Generic(g) if short_name(&g.name) == declared_short)
+    })
 }
 
 /// Extract trait metadata needed to resolve a model's morph columns and table.

@@ -185,7 +185,6 @@ async fn issue_7_cross_file_const_lists_both_in_any_open_order() {
 
 /// `defined('X') or define('X', …)` declares `X`.
 #[tokio::test]
-#[ignore = "issue 6 / D-14: defined() or define() is not indexed"]
 async fn issue_6_defined_or_define_is_indexed() {
     let (backend, uri) = open_main(C4_DEFINED_OR_DEFINE).await;
     let markdown = hover_markdown(&backend, &uri, C4_DEFINED_OR_DEFINE, "echo ORX", 6)
@@ -197,7 +196,6 @@ async fn issue_6_defined_or_define_is_indexed() {
 /// A fully qualified `\define()` call inside a namespace declares a global
 /// constant.
 #[tokio::test]
-#[ignore = "issue 8 / D-14: a fully qualified \\define() call is not indexed"]
 async fn issue_8_fully_qualified_define_is_indexed() {
     let (backend, uri) = open_main(C5_FQ_DEFINE).await;
     let markdown = hover_markdown(&backend, &uri, C5_FQ_DEFINE, "echo \\GLOBAL_NAME", 7)

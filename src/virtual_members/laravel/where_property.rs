@@ -164,6 +164,7 @@ pub fn build_where_property_methods_for_class(
         is_required: true,
         type_hint: Some(PhpType::mixed()),
         native_type_hint: None,
+        doc_type: None,
         description: None,
         default_value: None,
         is_variadic: false,

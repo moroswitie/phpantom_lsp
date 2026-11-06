@@ -5639,6 +5639,31 @@ fn a_native_declaration_rules_out_the_alternatives_it_forbids() {
 }
 
 #[test]
+fn a_native_union_caps_each_inherited_alternative_without_losing_refinements() {
+    for (doc, native, expected) in [
+        ("bool|list<string>", "false|array", "false|list<string>"),
+        ("bool|list<string>", "true|array", "true|list<string>"),
+        ("bool|list<string>", "bool|array", "bool|list<string>"),
+        ("false|list<string>", "bool|array", "false|list<string>"),
+        ("true|list<string>", "false|array", "list<string>"),
+        ("?bool", "?false", "false|null"),
+        ("?list<string>", "array", "list<string>"),
+        ("mixed", "false|array", "false|array"),
+        ("bool|TValue", "false|array", "false|TValue"),
+    ] {
+        let capped = PhpType::parse(doc)
+            .without_alternatives_the_native_type_forbids(&PhpType::parse(native))
+            .expect("a compatible alternative");
+        assert_eq!(capped.to_string(), expected, "{doc} under {native}");
+    }
+    assert_eq!(
+        PhpType::parse("true")
+            .without_alternatives_the_native_type_forbids(&PhpType::parse("false")),
+        None
+    );
+}
+
+#[test]
 fn truthy_type_strips_null_from_every_nullable_union_member() {
     // A lone nullable member loses its `null` the same way a bare `?T`
     // passed directly to `truthy_type` does.

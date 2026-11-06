@@ -12,6 +12,7 @@ fn param(name: &str) -> ParameterInfo {
         is_required: true,
         type_hint: None,
         native_type_hint: None,
+        doc_type: None,
         description: None,
         default_value: None,
         is_variadic: false,

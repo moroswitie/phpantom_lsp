@@ -87,6 +87,23 @@ pub(crate) enum FunctionLike<'ast, 'arena> {
     ArrowFunction(&'ast ArrowFunction<'arena>),
 }
 
+impl HasSpan for FunctionLike<'_, '_> {
+    fn span(&self) -> mago_span::Span {
+        FunctionLike::span(*self)
+    }
+}
+
+impl crate::symbol_map::docblock::Documented for FunctionLike<'_, '_> {
+    fn attribute_lists(&self) -> &[AttributeList<'_>] {
+        match self {
+            Self::Function(function) => function.attribute_lists.as_slice(),
+            Self::Method(method) => method.attribute_lists.as_slice(),
+            Self::Closure(closure) => closure.attribute_lists.as_slice(),
+            Self::ArrowFunction(arrow) => arrow.attribute_lists.as_slice(),
+        }
+    }
+}
+
 impl<'ast, 'arena> FunctionLike<'ast, 'arena> {
     /// The declaration `node` is, if it is one.
     pub(crate) fn of(node: Node<'ast, 'arena>) -> Option<Self> {

@@ -36,6 +36,7 @@ fn param(name: &str, type_hint: &str) -> ParameterInfo {
         is_required: true,
         type_hint: Some(PhpType::parse(type_hint)),
         native_type_hint: None,
+        doc_type: None,
         description: None,
         default_value: None,
         is_variadic: false,
@@ -109,6 +110,16 @@ fn param_signature_eq_ignores_description() {
     a.description = Some("First param".to_string());
     b.description = Some("Different description".to_string());
     assert!(a.signature_eq(&b));
+}
+
+/// A written `@param int` on a native `int` leaves the effective type as
+/// it was, but decides whether an ancestor's doc type applies.
+#[test]
+fn param_signature_eq_detects_doc_type() {
+    let mut a = param("$x", "int");
+    a.doc_type = Some(PhpType::parse("int"));
+    let b = param("$x", "int");
+    assert!(!a.signature_eq(&b));
 }
 
 // ── MethodInfo::signature_eq ────────────────────────────────────
@@ -249,6 +260,16 @@ fn method_signature_eq_detects_abstract_change() {
     assert!(!a.signature_eq(&b));
 }
 
+/// A written `@return void` on a native `void` leaves the effective type
+/// as it was, but decides whether an ancestor's doc type applies.
+#[test]
+fn method_signature_eq_detects_doc_return_type() {
+    let mut a = method("foo");
+    a.doc_return_type = Some(PhpType::parse("void"));
+    let b = method("foo");
+    assert!(!a.signature_eq(&b));
+}
+
 // ── PropertyInfo::signature_eq ──────────────────────────────────
 
 #[test]
@@ -312,6 +333,16 @@ fn prop_signature_eq_detects_description_change() {
 fn prop_signature_eq_detects_deprecation() {
     let mut a = prop("name", "string");
     a.deprecation_message = Some("Use fullName".to_string());
+    let b = prop("name", "string");
+    assert!(!a.signature_eq(&b));
+}
+
+/// A written `@var string` on a native `string` leaves the effective type
+/// as it was, but decides whether an ancestor's doc type applies.
+#[test]
+fn prop_signature_eq_detects_doc_type() {
+    let mut a = prop("name", "string");
+    a.doc_type = Some(PhpType::parse("string"));
     let b = prop("name", "string");
     assert!(!a.signature_eq(&b));
 }
@@ -1218,6 +1249,18 @@ fn func_signature_eq_different_conditional_return() {
     let mut a = func("bar");
     a.conditional_return = Some(PhpType::int());
     let b = func("bar");
+    assert!(!a.signature_eq(&b));
+}
+
+/// A written `@return string` on a native `string` leaves the effective
+/// type as it was, but is a fact readers of the function may ask.
+#[test]
+fn func_signature_eq_detects_doc_return_type() {
+    let mut a = func("bar");
+    a.return_type = Some(PhpType::parse("string"));
+    a.native_return_type = Some(PhpType::parse("string"));
+    let b = a.clone();
+    a.doc_return_type = Some(PhpType::parse("string"));
     assert!(!a.signature_eq(&b));
 }
 

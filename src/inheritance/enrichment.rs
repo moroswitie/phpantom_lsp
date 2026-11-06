@@ -3,62 +3,36 @@
 //! When a child class lacks docblock-provided type information (return types,
 //! parameter types, descriptions), this module propagates richer type information
 //! from ancestors through inheritance chains.
+//!
+//! "The child wrote no PHPDoc type" and "the ancestor supplies one" are read
+//! from the stored facts (`doc_type`, `doc_return_type`), never guessed from
+//! the effective and native types: an explicit `@param int $id` on a native
+//! `int $id` leaves the two equal and still overrides the ancestor.  A child
+//! that inherits a type inherits the ancestor's doc type with it, and the
+//! merge chain visits the nearest ancestor first, so the nearest documented
+//! ancestor wins and a grandparent's tag still reaches an undocumented
+//! grandchild through an undocumented parent.
 
 use std::sync::Arc;
 
 use super::ancestry::ClassLoader;
+use crate::docblock::doc_type_widens_native;
 use crate::php_type::{PhpType, TypeKind};
 use crate::types::{MethodInfo, ParameterInfo, PropertyInfo};
-
-/// Whether a child's effective type equals its native type, meaning no
-/// docblock override was applied.
-///
-/// Returns `true` when the child wrote no `@return` / `@var` / `@param`
-/// tag (so the effective type is just the native hint).  Returns `false`
-/// when the child provided its own docblock type — in that case the
-/// child's type is an intentional override and should not be replaced.
-fn lacks_docblock_override(effective: &Option<PhpType>, native: &Option<PhpType>) -> bool {
-    match (effective, native) {
-        // No effective type at all — nothing to override.
-        (None, _) => true,
-        // Effective type present but no native type — the child wrote
-        // a docblock-only type (e.g. `@return list<Pen>` with no native
-        // hint).  That is an intentional override.
-        (Some(_), None) => false,
-        // Both present — if they are equivalent, the child didn't write
-        // a docblock (the effective type is just the native hint echoed).
-        (Some(eff), Some(nat)) => eff.equivalent(nat),
-    }
-}
-
-/// Whether an ancestor's type is richer than the child's native type.
-///
-/// Returns `true` when the ancestor has an effective type that differs
-/// from its own native type (meaning the ancestor wrote a docblock).
-fn ancestor_has_richer_type(effective: &Option<PhpType>, native: &Option<PhpType>) -> bool {
-    match (effective, native) {
-        // Ancestor has an effective type but no native type — it came
-        // from a docblock (e.g. interface method with `@return list<Pen>`
-        // and no native hint).
-        (Some(_), None) => true,
-        // Both present — richer if they differ (docblock overrides native).
-        (Some(eff), Some(nat)) => !eff.equivalent(nat),
-        // No effective type — nothing richer to offer.
-        _ => false,
-    }
-}
 
 /// The return type `existing` should take from `ancestor`, or `None` when
 /// it keeps its own.
 ///
-/// The ancestor's docblock applies when (a) the child has no return type at
-/// all, or (b) the child's effective type equals its native type (no
-/// docblock override of its own) and the ancestor has a richer docblock
-/// type. The child's *native* hint still has the last word: an override
+/// The ancestor's type applies when (a) the child has no return type at
+/// all, or (b) no PHPDoc return type applies to the child
+/// (`doc_return_type` is `None`) and one applies to the ancestor. The
+/// child's *native* hint still has the last word: an override
 /// declaring `: array` cannot return the `string` half of an interface's
 /// `@return array|string`, so the inherited union is restricted to what the
-/// override's own declaration allows. A native `never` allows nothing to be
-/// returned, so there is nothing an ancestor's docblock could refine.
+/// override's own declaration allows, and a type wider than that
+/// declaration gives way to it ([`doc_type_widens_native`]). A native `never`
+/// allows nothing to be returned, so there is nothing an ancestor's
+/// docblock could refine.
 fn inherited_return_type(
     existing: &MethodInfo,
     ancestor: &MethodInfo,
@@ -72,8 +46,7 @@ fn inherited_return_type(
         return None;
     }
     if !(existing.return_type.is_none() && ancestor.return_type.is_some()
-        || lacks_docblock_override(&existing.return_type, &existing.native_return_type)
-            && ancestor_has_richer_type(&ancestor.return_type, &ancestor.native_return_type))
+        || existing.doc_return_type.is_none() && ancestor.doc_return_type.is_some())
     {
         return None;
     }
@@ -82,8 +55,13 @@ fn inherited_return_type(
     let Some(ref native) = existing.native_return_type else {
         return Some(inherited);
     };
+    // The native hint retains source spellings for display. With no own
+    // doc type, the effective type is that hint with class names resolved;
+    // a cap that copies one of its alternatives must keep those FQNs.
+    let native = existing.return_type.as_ref().unwrap_or(native);
     let inherited = within_native_class(inherited, existing, ancestor, class_loader)?;
-    inherited.without_alternatives_the_native_type_forbids(native)
+    let inherited = inherited.without_alternatives_the_native_type_forbids(native)?;
+    (!doc_type_widens_native(&inherited, native)).then_some(inherited)
 }
 
 /// `inherited` without the classes the override's own native return hint
@@ -199,9 +177,10 @@ fn method_enrichment_would_change(
     ancestor: &MethodInfo,
     class_loader: ClassLoader<'_>,
 ) -> bool {
-    // Return type.
+    // Return type, and the doc type that comes with it.
     if let Some(inherited) = inherited_return_type(existing, ancestor, class_loader)
-        && existing.return_type.as_ref() != Some(&inherited)
+        && (existing.return_type.as_ref() != Some(&inherited)
+            || existing.doc_return_type != ancestor.doc_return_type)
     {
         return true;
     }
@@ -243,7 +222,7 @@ fn method_enrichment_would_change(
 
     // Descriptions.
     (existing.description.is_none() && ancestor.description.is_some())
-        || (existing.return_description().is_none() && ancestor.return_description().is_some())
+        || inherits_return_description(existing, ancestor)
 }
 
 /// Whether [`enrich_constructor_parameters_by_name`] would change any
@@ -296,6 +275,69 @@ fn child_native_hint_overrides(
         })
 }
 
+/// Whether `existing_param` takes its type (and doc type) from
+/// `ancestor_param`: no PHPDoc type applies to the child, one applies to
+/// the ancestor, the child declared no specific native hint of its own,
+/// and the ancestor's type is not wider than the child's native hint
+/// ([`doc_type_widens_native`]).
+fn inherits_parameter_type(existing_param: &ParameterInfo, ancestor_param: &ParameterInfo) -> bool {
+    !child_native_hint_overrides(existing_param, ancestor_param)
+        && existing_param.doc_type.is_none()
+        && ancestor_param.doc_type.is_some()
+        && !widens_own_native(
+            ancestor_param.type_hint.as_ref(),
+            existing_param.native_type_hint.as_ref(),
+        )
+}
+
+/// [`doc_type_widens_native`] for a type and a native hint that may be
+/// absent: no native hint is nothing to widen.
+fn widens_own_native(inherited: Option<&PhpType>, native: Option<&PhpType>) -> bool {
+    inherited
+        .zip(native)
+        .is_some_and(|(inherited, native)| doc_type_widens_native(inherited, native))
+}
+
+/// Whether `existing` takes its type (and doc type) from `ancestor`: the
+/// child has no type at all, or no PHPDoc type applies to it, one applies
+/// to the ancestor, and that type is not wider than the child's native
+/// hint ([`doc_type_widens_native`]).
+fn inherits_property_type(existing: &PropertyInfo, ancestor: &PropertyInfo) -> bool {
+    existing.type_hint.is_none() && ancestor.type_hint.is_some()
+        || existing.doc_type.is_none()
+            && ancestor.doc_type.is_some()
+            && !widens_own_native(
+                ancestor.type_hint.as_ref(),
+                existing.native_type_hint.as_ref(),
+            )
+}
+
+/// Whether `existing_param` takes `ancestor_param`'s description: it has
+/// none, and wrote no `@param` type, whose tag would be the element whose
+/// own (empty) text wins (D-10).
+fn inherits_parameter_description(
+    existing_param: &ParameterInfo,
+    ancestor_param: &ParameterInfo,
+) -> bool {
+    existing_param.description.is_none()
+        && existing_param.doc_type.is_none()
+        && ancestor_param.description.is_some()
+}
+
+/// Whether `existing` takes `ancestor`'s `@return` description: the same
+/// rule as [`inherits_parameter_description`].
+fn inherits_return_description(existing: &MethodInfo, ancestor: &MethodInfo) -> bool {
+    existing.return_description().is_none()
+        && existing.doc_return_type.is_none()
+        && ancestor.return_description().is_some()
+}
+
+/// Whether `existing` takes `ancestor`'s description: the same rule as
+/// [`inherits_parameter_description`], for the property's `@var`.
+fn inherits_property_description(existing: &PropertyInfo, ancestor: &PropertyInfo) -> bool {
+    existing.description.is_none() && existing.doc_type.is_none() && ancestor.description.is_some()
+}
+
 /// Whether [`enrich_single_parameter`] would change `existing_param`.
 ///
 /// Mirrors the apply function's conditions (keep the two in sync).
@@ -303,16 +345,12 @@ fn parameter_enrichment_would_change(
     existing_param: &ParameterInfo,
     ancestor_param: &ParameterInfo,
 ) -> bool {
-    if !child_native_hint_overrides(existing_param, ancestor_param)
-        && lacks_docblock_override(&existing_param.type_hint, &existing_param.native_type_hint)
-        && ancestor_has_richer_type(&ancestor_param.type_hint, &ancestor_param.native_type_hint)
-        && existing_param.type_hint != ancestor_param.type_hint
-    {
+    if inherits_parameter_type(existing_param, ancestor_param) {
         return true;
     }
     existing_param.callable_invocation.is_none() && ancestor_param.callable_invocation.is_some()
         || existing_param.param_out_type.is_none() && ancestor_param.param_out_type.is_some()
-        || existing_param.description.is_none() && ancestor_param.description.is_some()
+        || inherits_parameter_description(existing_param, ancestor_param)
 }
 
 /// Enrich a child method with docblock information from an ancestor method.
@@ -321,26 +359,30 @@ fn parameter_enrichment_would_change(
 /// parameters, conditional return types, and type assertions from the
 /// ancestor when the child lacks its own docblock overrides.
 ///
-/// **Return type rule:** If the child's `return_type` equals its
-/// `native_return_type` (no docblock), and the ancestor's `return_type`
-/// differs from its `native_return_type` (has docblock), copy the
-/// ancestor's `return_type` to the child.  If the child has no
-/// `return_type` at all, always inherit the ancestor's.
+/// **Return type rule:** If no PHPDoc return type applies to the child
+/// (`doc_return_type` is `None`) and one applies to the ancestor, copy the
+/// ancestor's `return_type` and `doc_return_type` to the child.  If the
+/// child has no `return_type` at all, always inherit the ancestor's.
 ///
 /// **Parameter rule:** Match by position (not by name, since the child
-/// may rename parameters).  Same effective-vs-native comparison as
-/// return types.
+/// may rename parameters).  The same doc-type rule as return types.
 ///
-/// **Description rule:** Inherit `description` and `return_description`
-/// when the child has `None`.
+/// **Description rule:** Inherit `description` when the child has `None`,
+/// and `return_description` when the child has `None` and wrote no
+/// `@return` type: a written tag is the element, and its own (possibly
+/// empty) text wins (D-10).  The same holds for each parameter.
 pub(crate) fn enrich_method_from_ancestor(
     existing: &mut MethodInfo,
     ancestor: &MethodInfo,
     class_loader: ClassLoader<'_>,
 ) {
+    // Asked before the return type below copies the ancestor's doc type.
+    let takes_return_description = inherits_return_description(existing, ancestor);
+
     // ── Return type ─────────────────────────────────────────────
     if let Some(inherited) = inherited_return_type(existing, ancestor, class_loader) {
         existing.return_type = Some(inherited);
+        existing.doc_return_type = ancestor.doc_return_type.clone();
     }
 
     // ── Template parameters ─────────────────────────────────────
@@ -410,17 +452,16 @@ pub(crate) fn enrich_method_from_ancestor(
     if existing.description.is_none() && ancestor.description.is_some() {
         existing.description = ancestor.description.clone();
     }
-    if existing.return_description().is_none() && ancestor.return_description().is_some() {
+    if takes_return_description {
         existing.extras_mut().return_description = ancestor.return_description().map(str::to_owned);
     }
 }
 
 /// Enrich child parameters from ancestor parameters, matched by position.
 ///
-/// When a child parameter's `type_hint` equals its `native_type_hint`
-/// (no docblock override) and the ancestor parameter has a richer type,
-/// copy the ancestor's `type_hint`.  Also inherit `description` when
-/// the child parameter has none.
+/// When no PHPDoc type applies to a child parameter and one applies to the
+/// ancestor parameter, copy the ancestor's `type_hint` and `doc_type`.
+/// Also inherit `description` when the child parameter has none.
 pub(crate) fn enrich_parameters_from_ancestor(
     existing_params: &mut [ParameterInfo],
     ancestor_params: &[ParameterInfo],
@@ -452,8 +493,8 @@ pub(crate) fn enrich_constructor_parameters_by_name(
 
 /// Enrich a single child parameter from an ancestor parameter.
 ///
-/// Copies the ancestor's `type_hint` when the child lacks a docblock
-/// override, the ancestor has a richer type, **and** the child's
+/// Copies the ancestor's `type_hint` and `doc_type` when no PHPDoc type
+/// applies to the child, one applies to the ancestor, **and** the child's
 /// native type is not a specific concrete type.
 ///
 /// PHP allows contravariant parameter types: a concrete class may
@@ -471,15 +512,11 @@ pub(crate) fn enrich_single_parameter(
     existing_param: &mut ParameterInfo,
     ancestor_param: &ParameterInfo,
 ) {
-    // Type hint enrichment — the child must lack a docblock override
-    // AND the ancestor must have a richer type (docblock that goes
-    // beyond its native hint), AND the child must not have declared a
-    // narrower/wider native hint of its own.
-    if !child_native_hint_overrides(existing_param, ancestor_param)
-        && lacks_docblock_override(&existing_param.type_hint, &existing_param.native_type_hint)
-        && ancestor_has_richer_type(&ancestor_param.type_hint, &ancestor_param.native_type_hint)
-    {
+    // Asked before the type below copies the ancestor's doc type.
+    let takes_description = inherits_parameter_description(existing_param, ancestor_param);
+    if inherits_parameter_type(existing_param, ancestor_param) {
         existing_param.type_hint = ancestor_param.type_hint.clone();
+        existing_param.doc_type = ancestor_param.doc_type.clone();
     }
     // An override that does not say when it runs a callable runs it when
     // the method it overrides promised to, the way PHPStan inherits the
@@ -492,7 +529,7 @@ pub(crate) fn enrich_single_parameter(
         existing_param.param_out_type = ancestor_param.param_out_type.clone();
     }
     // Description enrichment
-    if existing_param.description.is_none() && ancestor_param.description.is_some() {
+    if takes_description {
         existing_param.description = ancestor_param.description.clone();
     }
 }
@@ -516,39 +553,34 @@ pub(crate) fn enrich_property_arc_from_ancestor(
 /// `existing`.  Mirrors the apply function's conditions exactly (keep the
 /// two in sync); an overwrite with an equal value counts as "no change".
 fn property_enrichment_would_change(existing: &PropertyInfo, ancestor: &PropertyInfo) -> bool {
-    // Type hint.
-    if (existing.type_hint.is_none() && ancestor.type_hint.is_some()
-        || lacks_docblock_override(&existing.type_hint, &existing.native_type_hint)
-            && ancestor_has_richer_type(&ancestor.type_hint, &ancestor.native_type_hint))
-        && existing.type_hint != ancestor.type_hint
+    // Type hint, and the doc type that comes with it.
+    if inherits_property_type(existing, ancestor)
+        && (existing.type_hint != ancestor.type_hint || existing.doc_type != ancestor.doc_type)
     {
         return true;
     }
 
     // Description.
-    existing.description.is_none() && ancestor.description.is_some()
+    inherits_property_description(existing, ancestor)
 }
 
 /// Enrich a child property with docblock information from an ancestor
 /// property.
 ///
 /// Propagates type hints and descriptions from the ancestor when the
-/// child lacks its own docblock overrides.  The same
-/// effective-vs-native comparison is used as for method return types.
+/// child lacks its own.  The same doc-type rule as for method return types.
 pub(crate) fn enrich_property_from_ancestor(existing: &mut PropertyInfo, ancestor: &PropertyInfo) {
+    // Asked before the type below copies the ancestor's doc type.
+    let takes_description = inherits_property_description(existing, ancestor);
+
     // ── Type hint ───────────────────────────────────────────────
-    // Same logic as method return types: propagate when the child
-    // has no type or has only the native hint without a docblock
-    // override, and the ancestor provides a richer type.
-    if existing.type_hint.is_none() && ancestor.type_hint.is_some()
-        || lacks_docblock_override(&existing.type_hint, &existing.native_type_hint)
-            && ancestor_has_richer_type(&ancestor.type_hint, &ancestor.native_type_hint)
-    {
+    if inherits_property_type(existing, ancestor) {
         existing.type_hint = ancestor.type_hint.clone();
+        existing.doc_type = ancestor.doc_type.clone();
     }
 
     // ── Description ─────────────────────────────────────────────
-    if existing.description.is_none() && ancestor.description.is_some() {
+    if takes_description {
         existing.description = ancestor.description.clone();
     }
 }

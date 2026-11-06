@@ -215,7 +215,11 @@ pub(super) fn build_var_section(
 ///
 /// A parameter entry is emitted when:
 ///   - the effective type differs from the native type, OR
-///   - the parameter has a description.
+///   - the parameter has a description, OR
+///   - a PHPDoc type applies to it (`doc_type`), even one equal to the
+///     native type: `@param int $id` is what overrides an ancestor's
+///     `@param positive-int $id`, so it shows as `**$id** `int`` rather
+///     than not at all.
 ///
 /// When types are the same, the type is shown alongside the description.
 /// When types differ but there is no description, only the type is shown.
@@ -237,12 +241,14 @@ pub(super) fn build_param_return_section(
     let mut entries = Vec::new();
 
     for p in params {
+        let has_desc = p.description.as_ref().is_some_and(|d| !d.is_empty());
         let type_differs = match (&p.type_hint, p.native_type_hint.as_ref()) {
-            (Some(eff_type), Some(nat)) => !eff_type.equivalent(nat),
+            (Some(eff_type), Some(nat)) => {
+                !eff_type.equivalent(nat) || p.doc_type.is_some() && !has_desc
+            }
             (Some(eff_type), None) => !eff_type.is_mixed(),
             _ => false,
         };
-        let has_desc = p.description.as_ref().is_some_and(|d| !d.is_empty());
 
         if !type_differs && !has_desc {
             continue;

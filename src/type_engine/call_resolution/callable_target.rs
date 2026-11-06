@@ -1006,6 +1006,7 @@ fn callable_type_as_target(return_type: &PhpType) -> Option<ResolvedCallableTarg
                     is_required: !p.optional && !p.variadic,
                     type_hint: Some(p.type_hint.clone()),
                     native_type_hint: None,
+                    doc_type: None,
                     description: None,
                     default_value: None,
                     is_variadic: p.variadic,

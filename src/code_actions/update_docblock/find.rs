@@ -1,7 +1,6 @@
 //! Finding the function or method whose docblock holds the cursor, and
 //! reading its signature and its existing tags.
 
-use mago_span::HasSpan;
 use mago_syntax::cst::class_like::member::ClassLikeMember;
 use mago_syntax::cst::*;
 
@@ -113,7 +112,7 @@ fn standalone_function_at<'a>(
 /// the docblock that immediately precedes it.
 fn function_docblock_at<'a>(
     cursor: u32,
-    node: &impl HasSpan,
+    node: &impl crate::symbol_map::docblock::Documented,
     param_list: &function_like::parameter::FunctionLikeParameterList<'a>,
     return_type_hint: Option<&function_like::r#return::FunctionLikeReturnTypeHint<'a>>,
     trivia: &[Trivia<'a>],
@@ -122,7 +121,11 @@ fn function_docblock_at<'a>(
     // Uses the canonical trivia-based locator from symbol_map::docblock.
     let (docblock_text, docblock_start) =
         crate::symbol_map::docblock::get_docblock_text_with_offset(trivia, content, node)?;
-    if cursor < docblock_start || cursor >= node.span().start.offset {
+    // The docblock and the whitespace after it up to the declaration.  A
+    // docblock after the attributes lies inside the node's span, so the
+    // region then ends with the docblock itself.
+    let docblock_end = docblock_start + docblock_text.len() as u32;
+    if cursor < docblock_start || cursor >= node.span().start.offset.max(docblock_end) {
         return None;
     }
     Some(build_info_for_function_like(
