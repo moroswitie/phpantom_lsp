@@ -5868,3 +5868,20 @@ class NestedAssignmentDemo
         return $pen?->color() ?? '';
     }
 }
+
+// ── Inherited PHPDoc Within Native Union Return Types ──────────────────────
+
+class InheritedUnionReturnDemo implements Scaffolding\ScaffoldingUnionReturnContract
+{
+    public function values(bool $available): false|array
+    {
+        return $available ? ['ready'] : false;
+    }
+
+    public function firstValue(bool $available): string
+    {
+        // Try: hover `$values` — false|list<string>, retaining the element type.
+        $values = $this->values($available);
+        return $values === false ? '' : $values[0];
+    }
+}

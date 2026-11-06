@@ -15,8 +15,9 @@ use crate::php_type::{PhpType, TypeKind};
 /// Whether a PHPDoc type is provably wider than the native type it would
 /// stand in for, so the native type must win.
 ///
-/// A native type is a promise the declaration keeps, and PHP lets an
-/// override narrow what its ancestor declares but never widen it.  A
+/// A native type is a promise the declaration keeps. PHP lets an override
+/// narrow return types and widen parameter types, but PHPDoc must still
+/// fit the declaration's own native type. A
 /// PHPDoc type, written on the declaration or inherited from an ancestor,
 /// may therefore refine the native type but never replace it with
 /// something wider: `@return bool` does not widen `EmptyIterator::valid():

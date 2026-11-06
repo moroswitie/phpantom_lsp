@@ -2216,6 +2216,12 @@ function runDemoAssertions(): void
     } catch (\Error) {
     }
 
+    $unionReturn = new InheritedUnionReturnDemo();
+    assert($unionReturn->values(true) === ['ready'], 'the array branch returns a list of strings');
+    assert($unionReturn->values(false) === false, 'the other native union alternative is false');
+    assert($unionReturn->firstValue(true) === 'ready', 'the inherited element type describes the list entry');
+    assert($unionReturn->firstValue(false) === '', 'the false branch is handled before reading the list');
+
     echo "All assertions passed.\n";
 }
 

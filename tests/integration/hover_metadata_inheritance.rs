@@ -4,6 +4,79 @@
 
 use crate::common::{assert_var_type, hover_markdown};
 
+#[test]
+fn inherited_doc_union_respects_each_native_return_alternative() {
+    let source = r#"<?php
+interface Values {
+    /** @return bool|list<string> */
+    public function values(): bool|array;
+}
+class NarrowValues implements Values {
+    public function values(): false|array { return ['value']; }
+}
+class BroadValues implements Values {
+    public function values(): bool|array { return ['value']; }
+}
+$__narrow = (new NarrowValues())->values();
+$__broad = (new BroadValues())->values();
+"#;
+    assert_var_type(source, "$__narrow", "false|list<string>");
+    assert_var_type(source, "$__broad", "bool|list<string>");
+}
+
+#[test]
+fn inherited_return_caps_keep_the_declarations_resolved_class_names() {
+    let source = r#"<?php
+namespace {
+    class Pen { public function ink(): string { return "global"; } }
+    abstract class GlobalAccess implements \ArrayAccess {
+        public function offsetGet(mixed $offset): Pen { return new Pen(); }
+    }
+}
+namespace Models {
+    class Pen { public function ink(): int { return 1; } }
+    abstract class DirectAccess implements \ArrayAccess {
+        public function offsetGet(mixed $offset): Pen { return new Pen(); }
+    }
+}
+namespace Imported {
+    use Models\Pen;
+    abstract class ImportedAccess implements \ArrayAccess {
+        public function offsetGet(mixed $offset): Pen|false { return new Pen(); }
+    }
+}
+namespace Caller {
+    function read(\GlobalAccess $global, \Models\DirectAccess $direct, \Imported\ImportedAccess $imported): void {
+        $__global = $global[0];
+        $__globalResult = $__global->ink();
+        $__direct = $direct[0];
+        $__directResult = $__direct->ink();
+        $__imported = $imported[0];
+        if ($__imported !== false) {
+            $__importedResult = $__imported->ink();
+        }
+    }
+}
+"#;
+    for (var, expected) in [("$__direct", "Pen"), ("$__imported", "Pen|false")] {
+        let markdown =
+            hover_markdown(source, &format!("{var} ="), 1, 0).expect("array-access result hover");
+        if var == "$__direct" {
+            assert!(markdown.contains("namespace Models;"), "{var}: {markdown}");
+        }
+        assert!(
+            markdown.contains(&format!("{var} = {expected}\n")),
+            "{markdown}"
+        );
+    }
+    assert_var_type(source, "$__globalResult", "string");
+    assert_var_type(source, "$__directResult", "int");
+    assert_var_type(source, "$__importedResult", "int");
+    let global = hover_markdown(source, "$__global =", 1, 0).expect("global result hover");
+    assert!(global.contains("$__global = Pen\n"), "{global}");
+    assert!(!global.contains("namespace "), "{global}");
+}
+
 const D3_INHERIT: &str =
     include_str!("../conformance/php-symbol-metadata/inheritance/partial-docs.php");
 

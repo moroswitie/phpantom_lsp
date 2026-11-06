@@ -523,18 +523,21 @@ fn a_patched_return_type_is_the_methods_doc_type() {
 fn a_stub_tag_restating_its_native_type_is_not_a_doc_type() {
     let mut class = empty_class("SplDoublyLinkedList");
     let int = PhpType::parse("int");
-    let count = crate::types::MethodInfo {
+    let mut count = crate::types::MethodInfo {
         name: atom("count"),
+        description: Some("Method summary.".into()),
         return_type: Some(int.clone()),
         native_return_type: Some(int.clone()),
         doc_return_type: Some(int.clone()),
         parameters: vec![crate::types::ParameterInfo {
             doc_type: Some(int.clone()),
+            description: Some("Parameter description.".into()),
             ..param("$index", "int")
         }]
         .into(),
         ..Default::default()
     };
+    count.extras_mut().return_description = Some("Return description.".into());
     let positive = PhpType::parse("int<0, max>");
     let offset = crate::types::MethodInfo {
         name: atom("offsetGet"),
@@ -560,5 +563,11 @@ fn a_stub_tag_restating_its_native_type_is_not_a_doc_type() {
     assert_eq!(count.doc_return_type, None);
     assert_eq!(count.return_type, Some(PhpType::parse("int")));
     assert_eq!(count.parameters[0].doc_type, None);
+    assert_eq!(count.description.as_deref(), Some("Method summary."));
+    assert_eq!(count.return_description(), Some("Return description."));
+    assert_eq!(
+        count.parameters[0].description.as_deref(),
+        Some("Parameter description.")
+    );
     assert_eq!(method("offsetGet").doc_return_type, Some(positive));
 }

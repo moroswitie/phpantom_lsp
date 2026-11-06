@@ -886,9 +886,11 @@ to guess it.
   `Countable::count()`'s `@return int<0,max>` like an undocumented one.
 - **Whether a PHPDoc type may stand in for a native type.** The owner is
   `doc_type_widens_native` (`src/docblock/type_override.rs`): a PHPDoc
-  type provably wider than the native type gives way to it, since PHP
-  lets an override narrow its ancestor's type but never widen it, and the
-  native type is a promise the body keeps. Inheritance
+  type provably wider than the native type gives way to it. The native
+  return-type cap checks union alternatives separately, so inherited
+  `bool|list<string>` under native `false|array` becomes `false|list<string>`.
+  PHP lets overrides narrow return types and widen parameter types, but
+  PHPDoc must still fit the declaration's own native type. Inheritance
   (`src/inheritance/enrichment.rs`) asks it for every return, parameter
   and property type it copies from an ancestor, so `Iterator::valid()`'s
   `@return bool` leaves `EmptyIterator::valid(): false` alone and

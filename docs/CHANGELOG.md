@@ -110,6 +110,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Inherited PHPDoc respects native return types.** An override keeps its declared return restrictions and the useful detail from inherited documentation, including the element types in a union. Contributed by @moroswitie.
 - **Open files keep their own declarations.** In a file with unsaved changes, hover, go-to-definition and other features could switch to the saved copy once another file used one of its classes, functions or constants, so a renamed declaration went missing or a definition landed on the wrong line. They now keep using the editor's text, and a class name declared in several namespace blocks of one file resolves to the block it names. Contributed by @moroswitie.
 - **Hover keeps PHP modifiers.** Class and member hovers show `readonly`, `final`, and `abstract` restrictions, including the class around a constructor or inherited member. Contributed by @moroswitie.
 - **Descriptions on constructor-promoted properties.** Hover shows the description from the parameter's own docblock, else from the constructor's `@param` tag. Contributed by @moroswitie.

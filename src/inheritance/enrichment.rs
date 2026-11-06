@@ -55,6 +55,10 @@ fn inherited_return_type(
     let Some(ref native) = existing.native_return_type else {
         return Some(inherited);
     };
+    // The native hint retains source spellings for display. With no own
+    // doc type, the effective type is that hint with class names resolved;
+    // a cap that copies one of its alternatives must keep those FQNs.
+    let native = existing.return_type.as_ref().unwrap_or(native);
     let inherited = within_native_class(inherited, existing, ancestor, class_loader)?;
     let inherited = inherited.without_alternatives_the_native_type_forbids(native)?;
     (!doc_type_widens_native(&inherited, native)).then_some(inherited)
